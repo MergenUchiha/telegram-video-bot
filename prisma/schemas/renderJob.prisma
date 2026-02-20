@@ -1,0 +1,21 @@
+model RenderJob {
+  id          String         @id @default(uuid()) @db.Uuid
+  sessionId   String         @map("session_id") @db.Uuid
+  session     RenderSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  bullJobId   String?        @map("bull_job_id")
+  status      RenderJobStatus @default(QUEUED)
+  progress    Int            @default(0)
+  attemptsMade Int           @default(0) @map("attempts_made")
+
+  startedAt   DateTime?      @map("started_at")
+  finishedAt  DateTime?      @map("finished_at")
+  error       String?        @map("error")
+
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@index([status])
+  @@map("render_jobs")
+}

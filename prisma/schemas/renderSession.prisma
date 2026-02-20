@@ -1,0 +1,45 @@
+model RenderSession {
+  id                 String              @id @default(uuid()) @db.Uuid
+  userId             String              @map("user_id") @db.Uuid
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  state              RenderSessionState  @default(WAIT_VIDEO)
+  isActive           Boolean             @default(true) @map("is_active")
+
+  sourceVideoKey     String?             @map("source_video_key")
+  outputVideoKey     String?             @map("output_video_key")
+
+  ttsEnabled         Boolean             @default(false) @map("tts_enabled")
+  ttsText            String?             @map("tts_text")
+  language           String?             @map("language")
+  voiceId            String?             @map("voice_id")
+  ttsSpeed           Float?              @map("tts_speed")
+
+
+  subtitlesMode      SubtitlesMode       @default(NONE) @map("subtitles_mode")
+
+  overlayEnabled     Boolean             @default(false) @map("overlay_enabled")
+  overlayComment     String?             @map("overlay_comment")
+
+  originalAudioPolicy OriginalAudioPolicy @default(DUCK) @map("original_audio_policy")
+  advancedKeepWithTts Boolean            @default(false) @map("advanced_keep_with_tts")
+
+  outputWidth        Int                 @default(1080) @map("output_width")
+  outputHeight       Int                 @default(1920) @map("output_height")
+
+  progress           Int                 @default(0)
+  lastError          String?             @map("last_error")
+
+  lastBotMessageId   Int?                @map("last_bot_message_id")
+  telegramMeta       Json?               @map("telegram_meta")
+
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+
+  jobs               RenderJob[]
+  youtubeUploads     YoutubeUpload[]
+
+  @@index([userId, isActive])
+  @@index([state])
+  @@map("render_sessions")
+}

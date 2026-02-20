@@ -1,0 +1,12 @@
+model User {
+  id             String         @id @default(uuid()) @db.Uuid
+  telegramUserId String         @unique @map("telegram_user_id")
+  telegramChatId String         @map("telegram_chat_id")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  sessions       RenderSession[]
+  youtubeChannels YoutubeChannel[]
+
+  @@map("users")
+}

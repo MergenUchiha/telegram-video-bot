@@ -1,0 +1,56 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RenderSessionState {
+  WAIT_VIDEO
+  WAIT_TEXT_OR_SETTINGS
+  READY_TO_RENDER
+  RENDER_QUEUED
+  RENDERING
+  RENDER_DONE
+  RENDER_FAILED
+
+  YOUTUBE_WAIT_CHANNEL
+  YOUTUBE_UPLOADING
+  YOUTUBE_DONE
+  YOUTUBE_FAILED
+}
+
+enum SubtitlesMode {
+  NONE
+  HARD
+  SOFT
+}
+
+enum OriginalAudioPolicy {
+  REPLACE
+  DUCK
+  MUTE
+  KEEP
+}
+
+enum RenderJobStatus {
+  QUEUED
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum YoutubeUploadStatus {
+  QUEUED
+  UPLOADING
+  DONE
+  FAILED
+}

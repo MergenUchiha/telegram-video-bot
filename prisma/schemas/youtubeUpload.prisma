@@ -1,0 +1,23 @@
+model YoutubeUpload {
+  id            String            @id @default(uuid()) @db.Uuid
+  sessionId     String            @map("session_id") @db.Uuid
+  session       RenderSession     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  channelId     String            @map("youtube_channel_id") @db.Uuid
+  channel       YoutubeChannel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  status        YoutubeUploadStatus @default(QUEUED)
+  youtubeVideoId String?          @map("youtube_video_id")
+  error         String?           @map("error")
+
+  startedAt     DateTime?         @map("started_at")
+  finishedAt    DateTime?         @map("finished_at")
+
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+
+  @@index([sessionId])
+  @@index([channelId])
+  @@index([status])
+  @@map("youtube_uploads")
+}
