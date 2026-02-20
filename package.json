@@ -1,0 +1,87 @@
+{
+  "name": "telegram-video-bot",
+  "version": "0.0.1",
+  "description": "",
+  "author": "",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "prebuild": "rimraf dist",
+    "build": "nest build",
+    "start": "node dist/main.js",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+
+    "start:worker": "node dist/worker.js",
+    "start:worker:dev": "nest start worker --watch",
+
+    "lint": "eslint \"{src,apps,test}/**/*.ts\" --max-warnings=0",
+    "format": "prettier --write \"{src,apps,test}/**/*.ts\"",
+    "test": "jest",
+    "test:watch": "jest --watch",
+
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.986.0",
+    "@aws-sdk/s3-request-presigner": "3.986.0",
+    "@nestjs/axios": "4.0.0",
+    "@nestjs/bullmq": "11.0.3",
+    "@nestjs/common": "11.1.14",
+    "@nestjs/config": "4.0.2",
+    "@nestjs/core": "11.1.14",
+    "@nestjs/platform-express": "11.1.14",
+    "@prisma/client": "7.4.0",
+    "bullmq": "5.69.3",
+    "class-transformer": "0.5.1",
+    "class-validator": "0.14.2",
+    "dotenv": "17.3.1",
+    "execa": "9.6.1",
+    "googleapis": "171.4.0",
+    "grammy": "1.38.4",
+    "ioredis": "5.9.3",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.1",
+    "uuid": "13.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "11.0.16",
+    "@nestjs/schematics": "11.0.9",
+    "@nestjs/testing": "11.1.14",
+    "@types/jest": "29.5.14",
+    "@types/node": "25.2.2",
+    "@types/uuid": "10.0.0",
+    "@typescript-eslint/eslint-plugin": "8.54.0",
+    "@typescript-eslint/parser": "8.54.0",
+    "eslint": "10.0.0",
+    "eslint-config-prettier": "10.1.8",
+    "jest": "29.7.0",
+    "prettier": "3.8.1",
+    "rimraf": "6.0.1",
+    "supertest": "7.1.4",
+    "ts-jest": "29.4.6",
+    "ts-node": "10.9.2",
+    "tsconfig-paths": "4.2.0",
+    "typescript": "5.9.3"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node"
+  }
+}
