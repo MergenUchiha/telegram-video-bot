@@ -19,9 +19,9 @@ export class BotService implements OnModuleInit {
     const bot = new Bot(token);
     this.updates.register(bot);
 
-    const mode = (this.config.get<string>('BOT_MODE') ?? 'polling').toLowerCase();
+    const mode = (this.config.get<string>('TELEGRAM_BOT_MODE') ?? 'polling').toLowerCase();
     if (mode !== 'polling') {
-      this.logger.warn('BOT_MODE is not polling. For MVP set BOT_MODE=polling.');
+      this.logger.warn('TELEGRAM_BOT_MODE is not polling. For MVP set TELEGRAM_BOT_MODE=polling.');
     }
 
     this.logger.log('Starting Telegram bot (polling)...');
