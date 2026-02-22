@@ -6,6 +6,7 @@ import { QUEUE_RENDER } from '../redis/redis.constants';
 export interface RenderJobPayload {
   sessionId: string;
   userId: string;
+  chatId: string; // ✅ Telegram chat для отправки результата
 }
 
 @Injectable()

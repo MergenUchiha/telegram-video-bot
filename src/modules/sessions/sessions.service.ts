@@ -49,4 +49,53 @@ export class SessionsService {
       data: { telegramMeta: meta },
     });
   }
+
+  async setSourceVideoKey(sessionId: string, key: string) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { sourceVideoKey: key },
+    });
+  }
+
+  async setOutputVideoKey(sessionId: string, key: string) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { outputVideoKey: key },
+    });
+  }
+
+  async setProgress(sessionId: string, progress: number) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { progress },
+    });
+  }
+
+  async setLastError(sessionId: string, lastError: string) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { lastError },
+    });
+  }
+
+  async getSessionById(sessionId: string) {
+    return this.prisma.renderSession.findUnique({ where: { id: sessionId } });
+  }
+
+  async setOverlayComment(sessionId: string, overlayComment: string | null) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: {
+        overlayComment,
+        overlayEnabled: overlayComment ? true : false,
+      },
+    });
+  }
+
+  async setOriginalAudioPolicy(sessionId: string, policy: 'KEEP' | 'MUTE') {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { originalAudioPolicy: policy },
+    });
+  }
 }
