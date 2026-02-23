@@ -92,10 +92,55 @@ export class SessionsService {
     });
   }
 
-  async setOriginalAudioPolicy(sessionId: string, policy: 'KEEP' | 'MUTE') {
+  async setOriginalAudioPolicy(
+    sessionId: string,
+    policy: 'REPLACE' | 'DUCK' | 'MUTE' | 'KEEP',
+  ) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
       data: { originalAudioPolicy: policy },
+    });
+  }
+
+  async setTtsEnabled(sessionId: string, enabled: boolean) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { ttsEnabled: enabled },
+    });
+  }
+
+  async setTtsText(sessionId: string, ttsText: string | null) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { ttsText },
+    });
+  }
+
+  async setSubtitlesMode(sessionId: string, mode: 'NONE' | 'HARD' | 'SOFT') {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { subtitlesMode: mode },
+    });
+  }
+
+  async setTtsSettings(
+    sessionId: string,
+    data: {
+      language?: string | null;
+      voiceId?: string | null;
+      ttsSpeed?: number | null;
+    },
+  ) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data,
+    });
+  }
+
+  async setAdvancedKeepWithTts(sessionId: string, enabled: boolean) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { advancedKeepWithTts: enabled },
     });
   }
 }

@@ -21,6 +21,39 @@ export class BotUpdate {
   register(bot: Bot) {
     // sessionId -> ожидаем следующий text как overlay comment
     const waitingComment = new Set<string>();
+    const waitingTtsText = new Set<string>();
+
+    const TG_LIMIT = 4096;
+    const SAFE_CHUNK = 3500;
+
+    const clip = (s: any, max = 900) => {
+      const str = String(s ?? '');
+      if (str.length <= max) return str;
+      // полезнее показывать хвост для ffmpeg ошибок
+      const tail = str.slice(-max);
+      return `…(truncated, last ${max} chars)\n${tail}`;
+    };
+
+    const replyLong = async (ctx: any, text: string) => {
+      const chunks: string[] = [];
+      let rest = text;
+
+      while (rest.length > SAFE_CHUNK) {
+        // пытаемся резать по \n чтобы не ломать строки
+        let cut = rest.lastIndexOf('\n', SAFE_CHUNK);
+        if (cut < 1000) cut = SAFE_CHUNK;
+        chunks.push(rest.slice(0, cut));
+        rest = rest.slice(cut);
+      }
+      if (rest.trim().length) chunks.push(rest);
+
+      for (const c of chunks) {
+        // если вдруг всё равно больше лимита — подстрахуемся
+        const safe =
+          c.length > TG_LIMIT ? c.slice(0, TG_LIMIT - 50) + '\n…' : c;
+        await ctx.reply(safe);
+      }
+    };
 
     bot.command('start', async (ctx) => {
       await ctx.reply('Hi! Use /new to start a new render session.');
@@ -33,8 +66,9 @@ export class BotUpdate {
       const user = await this.sessions.getOrCreateUser(tgUserId, chatId);
       const session = await this.sessions.createNewSession(user.id);
 
-      // на всякий: если новая сессия — не должен висеть режим comment
+      // на всякий: если новая сессия — не должен висеть режим comment/tts text
       waitingComment.delete(session.id);
+      waitingTtsText.delete(session.id);
 
       await ctx.reply('✅ New session created. Send me a video 🎬');
     });
@@ -53,25 +87,34 @@ export class BotUpdate {
       const cachedProgress = await this.progress.getProgress(session.id);
       const lastError = await this.progress.getLastError(session.id);
 
-      // 2) если Redis ничего не знает — fallback на DB (как было)
+      // 2) если Redis ничего не знает — fallback на DB
       if (!cachedStatus && cachedProgress === null && !lastError) {
         const audioFallback = (session as any).originalAudioPolicy ?? 'KEEP';
+
         const overlayEnabledFallback = Boolean((session as any).overlayEnabled);
         const overlayCommentFallback = (session as any).overlayComment as
           | string
           | null
           | undefined;
 
-        return ctx.reply(
+        const ttsEnabledFallback = Boolean((session as any).ttsEnabled);
+        const subsFallback = (session as any).subtitlesMode ?? 'NONE';
+        const ttsTextFallback = (session as any).ttsText ? '(set)' : '(none)';
+
+        const msg =
+          `Audio: ${audioFallback}\n` +
+          `TTS: ${ttsEnabledFallback ? 'ON' : 'OFF'}\n` +
+          `Subs: ${subsFallback}\n` +
+          `TTS text: ${ttsTextFallback}\n` +
+          `Comment: ${
+            overlayEnabledFallback && overlayCommentFallback
+              ? `"${overlayCommentFallback}"`
+              : '(none)'
+          }\n` +
           `State: ${session.state}\n` +
-            `Video: ${session.sourceVideoKey ? 'uploaded' : 'not uploaded'}\n` +
-            `Audio: ${audioFallback}\n` +
-            `Comment: ${
-              overlayEnabledFallback && overlayCommentFallback
-                ? `"${overlayCommentFallback}"`
-                : '(none)'
-            }`,
-        );
+          `Video: ${session.sourceVideoKey ? 'uploaded' : 'not uploaded'}`;
+
+        return replyLong(ctx, msg);
       }
 
       // 3) красивый вывод
@@ -80,6 +123,13 @@ export class BotUpdate {
       // Settings from DB
       const audio = (session as any).originalAudioPolicy ?? 'KEEP';
       lines.push(`Audio: ${audio}`);
+
+      const ttsEnabled = Boolean((session as any).ttsEnabled);
+      const subs = (session as any).subtitlesMode ?? 'NONE';
+      const ttsText = (session as any).ttsText ? '(set)' : '(none)';
+      lines.push(`TTS: ${ttsEnabled ? 'ON' : 'OFF'}`);
+      lines.push(`Subs: ${subs}`);
+      lines.push(`TTS text: ${ttsText}`);
 
       const overlayEnabled = Boolean((session as any).overlayEnabled);
       const overlayComment = (session as any).overlayComment as
@@ -102,7 +152,7 @@ export class BotUpdate {
       }
 
       if (cachedStatus?.message) {
-        lines.push(`Message: ${cachedStatus.message}`);
+        lines.push(`Message: ${clip(cachedStatus.message, 1200)}`);
       }
 
       if (cachedStatus?.updatedAt) {
@@ -114,10 +164,10 @@ export class BotUpdate {
       );
 
       if (lastError) {
-        lines.push(`Last error: ${lastError}`);
+        lines.push(`Last error: ${clip(lastError, 1200)}`);
       }
 
-      return ctx.reply(lines.join('\n'));
+      return replyLong(ctx, lines.join('\n'));
     });
 
     bot.on('message:video', async (ctx) => {
@@ -128,8 +178,9 @@ export class BotUpdate {
       const session = await this.sessions.getActiveSession(user.id);
       if (!session) return ctx.reply('Use /new first');
 
-      // если пользователь прислал видео — сбрасываем режим ожидания комментария
+      // если пользователь прислал видео — сбрасываем режим ожидания
       waitingComment.delete(session.id);
+      waitingTtsText.delete(session.id);
 
       if (
         session.state === RenderSessionState.RENDER_QUEUED ||
@@ -164,8 +215,7 @@ export class BotUpdate {
       });
       await this.sessions.setSourceVideoKey(session.id, key);
 
-      // При новом видео логично сбросить старый overlay comment, чтобы не удивлять пользователя
-      // (Если хочешь сохранять — просто убери эту строку)
+      // при новом видео логично сбросить старый overlay comment
       await this.sessions.setOverlayComment(session.id, null);
 
       await this.sessions.setState(
@@ -173,7 +223,7 @@ export class BotUpdate {
         RenderSessionState.WAIT_TEXT_OR_SETTINGS,
       );
 
-      // Берём актуальные настройки для вывода в "Video uploaded..."
+      // Берём актуальные настройки для вывода
       const refreshed = await this.sessions.getActiveSession(user.id);
       const audio = (refreshed as any)?.originalAudioPolicy ?? 'KEEP';
       const overlayEnabled = Boolean((refreshed as any)?.overlayEnabled);
@@ -182,18 +232,31 @@ export class BotUpdate {
         | null
         | undefined;
 
+      const ttsEnabled = Boolean((refreshed as any)?.ttsEnabled);
+      const subs = (refreshed as any)?.subtitlesMode ?? 'NONE';
+
       const settingsLines = [
         `Audio: ${audio}`,
+        `TTS: ${ttsEnabled ? 'ON' : 'OFF'}`,
+        `Subs: ${subs}`,
         overlayEnabled && overlayComment
           ? `Comment: "${overlayComment}"`
           : 'Comment: (none)',
       ];
 
       const kb = new InlineKeyboard()
-        .text('💬 Add Comment', 'render:comment')
+        .text(ttsEnabled ? '🗣 TTS: ON' : '🗣 TTS: OFF', 'render:tts:toggle')
+        .text('✍️ Set TTS Text', 'render:tts:text')
         .row()
-        .text('🔊 Keep Audio', 'render:audio:keep')
-        .text('🔇 Mute Audio', 'render:audio:mute')
+        .text(`🎞 Subs: ${subs}`, 'render:subs:toggle')
+        .row()
+        .text(`💬 Add Comment`, 'render:comment')
+        .row()
+        .text('🔁 Replace', 'render:audio:replace')
+        .text('🦆 Duck', 'render:audio:duck')
+        .row()
+        .text('🔇 Mute', 'render:audio:mute')
+        .text('🔊 Keep', 'render:audio:keep')
         .row()
         .text('✅ Approve & Render', 'render:approve')
         .row()
@@ -209,6 +272,82 @@ export class BotUpdate {
           reply_markup: kb,
         },
       );
+    });
+
+    bot.callbackQuery('render:tts:toggle', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const user = await this.sessions.getOrCreateUser(
+        String(ctx.from?.id),
+        String(ctx.chat?.id),
+      );
+      const session = await this.sessions.getActiveSession(user.id);
+      if (!session) return ctx.reply('No active session. Use /new');
+
+      const enabled = !Boolean((session as any).ttsEnabled);
+      await this.sessions.setTtsEnabled(session.id, enabled);
+
+      // если выключили TTS — логично сбросить subs в NONE
+      if (!enabled) await this.sessions.setSubtitlesMode(session.id, 'NONE');
+
+      await ctx.reply(`✅ TTS: ${enabled ? 'ON' : 'OFF'}`);
+    });
+
+    bot.callbackQuery('render:tts:text', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const user = await this.sessions.getOrCreateUser(
+        String(ctx.from?.id),
+        String(ctx.chat?.id),
+      );
+      const session = await this.sessions.getActiveSession(user.id);
+      if (!session) return ctx.reply('No active session. Use /new');
+      if (!session.sourceVideoKey) return ctx.reply('Send a video first.');
+
+      waitingTtsText.add(session.id);
+      await ctx.reply('✍️ Send the TTS text (next message).');
+    });
+
+    bot.callbackQuery('render:subs:toggle', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const user = await this.sessions.getOrCreateUser(
+        String(ctx.from?.id),
+        String(ctx.chat?.id),
+      );
+      const session = await this.sessions.getActiveSession(user.id);
+      if (!session) return ctx.reply('No active session. Use /new');
+
+      const ttsEnabled = Boolean((session as any).ttsEnabled);
+      if (!ttsEnabled)
+        return ctx.reply('⚠️ Subtitles available only when TTS is ON.');
+
+      const cur = (session as any).subtitlesMode ?? 'NONE';
+      const next = cur === 'HARD' ? 'NONE' : 'HARD';
+      await this.sessions.setSubtitlesMode(session.id, next);
+
+      await ctx.reply(`✅ Subtitles: ${next}`);
+    });
+
+    bot.callbackQuery('render:audio:replace', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const user = await this.sessions.getOrCreateUser(
+        String(ctx.from?.id),
+        String(ctx.chat?.id),
+      );
+      const session = await this.sessions.getActiveSession(user.id);
+      if (!session) return ctx.reply('No active session. Use /new');
+      await this.sessions.setOriginalAudioPolicy(session.id, 'REPLACE');
+      await ctx.reply('✅ Audio policy set: REPLACE');
+    });
+
+    bot.callbackQuery('render:audio:duck', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const user = await this.sessions.getOrCreateUser(
+        String(ctx.from?.id),
+        String(ctx.chat?.id),
+      );
+      const session = await this.sessions.getActiveSession(user.id);
+      if (!session) return ctx.reply('No active session. Use /new');
+      await this.sessions.setOriginalAudioPolicy(session.id, 'DUCK');
+      await ctx.reply('✅ Audio policy set: DUCK');
     });
 
     bot.callbackQuery('render:comment', async (ctx) => {
@@ -271,14 +410,23 @@ export class BotUpdate {
       const session = await this.sessions.getActiveSession(user.id);
       if (!session) return;
 
+      if (waitingTtsText.has(session.id)) {
+        const text = (ctx.message.text || '').trim();
+        if (!text) return ctx.reply('Empty TTS text. Send again.');
+
+        await this.sessions.setTtsEnabled(session.id, true);
+        await this.sessions.setTtsText(session.id, text.slice(0, 4000));
+        waitingTtsText.delete(session.id);
+
+        return ctx.reply('✅ TTS text saved.');
+      }
+
       if (!waitingComment.has(session.id)) return;
 
       const text = (ctx.message.text || '').trim();
       if (!text) return ctx.reply('Empty comment. Send text or /new to reset.');
 
-      // MVP ограничение — чтобы drawtext не сломался
       const safe = text.slice(0, 200);
-
       await this.sessions.setOverlayComment(session.id, safe);
 
       waitingComment.delete(session.id);
@@ -306,7 +454,6 @@ export class BotUpdate {
         return ctx.reply('No video uploaded yet. Send a video first.');
       }
 
-      // state -> queued
       await this.sessions.setState(
         session.id,
         RenderSessionState.RENDER_QUEUED,
@@ -319,15 +466,14 @@ export class BotUpdate {
       });
       await this.progress.setProgress(session.id, 0);
 
-      // enqueue BullMQ render job (jobId=sessionId)
       const job = await this.queues.enqueueRender({
         sessionId: session.id,
         userId: user.id,
         chatId: String(ctx.chat?.id),
       });
 
-      // после approve больше не ждём комментарий
       waitingComment.delete(session.id);
+      waitingTtsText.delete(session.id);
 
       await ctx.reply(
         `✅ Enqueued. jobId=${job.id}\nUse /status to track progress.`,
@@ -343,6 +489,7 @@ export class BotUpdate {
 
       const newSession = await this.sessions.createNewSession(user.id);
       waitingComment.delete(newSession.id);
+      waitingTtsText.delete(newSession.id);
 
       await ctx.reply('❌ Cancelled. New session started. Send a video 🎬');
     });

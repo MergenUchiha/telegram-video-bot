@@ -12,6 +12,9 @@ import { PrismaModule } from '../modules/prisma/prisma.module';
 import { TelegramSenderModule } from '../modules/telegram-sender/telegram-sender.module';
 
 import { RenderProcessor } from './render.processor';
+import { TtsModule } from 'src/modules/tts/tts.module';
+import { MediaProbeModule } from 'src/modules/media-probe/media-probe.module';
+import { SubtitlesModule } from 'src/modules/subtitles/subtitles.module';
 
 @Module({
   imports: [
@@ -28,6 +31,9 @@ import { RenderProcessor } from './render.processor';
     StorageModule,
     RedisModule,
     TelegramSenderModule,
+    TtsModule,
+    MediaProbeModule,
+    SubtitlesModule,
   ],
   providers: [RenderProcessor],
 })

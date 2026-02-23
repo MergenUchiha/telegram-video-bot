@@ -28,21 +28,29 @@ export class BotService implements OnModuleInit {
 
     const bot = new Bot(token);
 
+    bot.use(async (ctx, next) => {
+      const u = ctx.update;
+      this.logger.log(
+        `update received: ${Object.keys(u).join(', ')} ` +
+          (u?.message?.text ? `text="${u.message.text}"` : ''),
+      );
+      await next();
+    });
+
     // ✅ Ставим обработчик ошибок ДО register/start
     bot.catch((err) => {
       const updateId = err.ctx?.update?.update_id;
 
       const { message, stack } = formatUnknownError(err.error);
 
-      this.logger.error(
-        `Bot error on update ${updateId}: ${message}`,
-        stack,
-      );
+      this.logger.error(`Bot error on update ${updateId}: ${message}`, stack);
     });
 
     this.updates.register(bot);
 
-    const mode = (this.config.get<string>('TELEGRAM_BOT_MODE') ?? 'polling').toLowerCase();
+    const mode = (
+      this.config.get<string>('TELEGRAM_BOT_MODE') ?? 'polling'
+    ).toLowerCase();
     if (mode !== 'polling') {
       this.logger.warn(
         'TELEGRAM_BOT_MODE is not polling. For MVP set TELEGRAM_BOT_MODE=polling.',

@@ -8,6 +8,9 @@ import { WorkerModule } from './worker/worker.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { TelegramFilesModule } from './modules/telegram-files/telegram-files.module';
 import { TelegramSenderModule } from './modules/telegram-sender/telegram-sender.module';
+import { TtsModule } from './modules/tts/tts.module';
+import { MediaProbeModule } from './modules/media-probe/media-probe.module';
+import { SubtitlesModule } from './modules/subtitles/subtitles.module';
 
 @Module({
   imports: [
@@ -20,6 +23,9 @@ import { TelegramSenderModule } from './modules/telegram-sender/telegram-sender.
     StorageModule,
     TelegramFilesModule,
     TelegramSenderModule,
+    TtsModule,
+    MediaProbeModule,
+    SubtitlesModule,
   ],
 })
 export class AppModule {}

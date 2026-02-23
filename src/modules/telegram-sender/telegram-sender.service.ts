@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as fs from 'node:fs';
 
 @Injectable()
 export class TelegramSenderService {
@@ -11,8 +12,10 @@ export class TelegramSenderService {
     if (!token) throw new Error('TELEGRAM_BOT_TOKEN is missing');
     this.token = token;
 
-    this.apiBase = (this.config.get<string>('TELEGRAM_API_BASE_URL') || 'https://api.telegram.org')
-      .replace(/\/$/, '');
+    this.apiBase = (
+      this.config.get<string>('TELEGRAM_API_BASE_URL') ||
+      'https://api.telegram.org'
+    ).replace(/\/$/, '');
   }
 
   async sendMessage(chatId: string, text: string) {
@@ -22,7 +25,8 @@ export class TelegramSenderService {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text }),
     });
-    if (!res.ok) throw new Error(`sendMessage failed: ${res.status} ${res.statusText}`);
+    if (!res.ok)
+      throw new Error(`sendMessage failed: ${res.status} ${res.statusText}`);
   }
 
   async sendVideoByUrl(chatId: string, videoUrl: string, caption?: string) {
@@ -34,7 +38,33 @@ export class TelegramSenderService {
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
-      throw new Error(`sendVideo failed: ${res.status} ${res.statusText} ${body}`.slice(0, 500));
+      throw new Error(
+        `sendVideo failed: ${res.status} ${res.statusText} ${body}`.slice(
+          0,
+          500,
+        ),
+      );
+    }
+  }
+
+  async sendVideoFile(chatId: string, filePath: string, caption?: string) {
+    const url = `${this.apiBase}/bot${this.token}/sendVideo`;
+
+    const buf = await fs.promises.readFile(filePath);
+    const form = new FormData();
+    form.set('chat_id', chatId);
+    if (caption) form.set('caption', caption);
+    form.set('video', new Blob([buf]), 'out.mp4');
+
+    const res = await fetch(url, { method: 'POST', body: form as any });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(
+        `sendVideo(file) failed: ${res.status} ${res.statusText} ${body}`.slice(
+          0,
+          500,
+        ),
+      );
     }
   }
 }
