@@ -6,10 +6,17 @@ import {
   GetObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
+  PutBucketLifecycleConfigurationCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable } from 'stream';
 import * as fs from 'node:fs';
+
+export interface LifecycleRule {
+  id: string;
+  prefix: string;
+  expirationDays: number;
+}
 
 @Injectable()
 export class StorageService {
@@ -52,6 +59,27 @@ export class StorageService {
     }
   }
 
+  /**
+   * Устанавливает lifecycle rules на бакете.
+   * Перезаписывает все существующие правила.
+   * Работает с MinIO (поддерживает S3 lifecycle API).
+   */
+  async putBucketLifecycle(rules: LifecycleRule[]): Promise<void> {
+    await this.s3.send(
+      new PutBucketLifecycleConfigurationCommand({
+        Bucket: this.bucket,
+        LifecycleConfiguration: {
+          Rules: rules.map((r) => ({
+            ID: r.id,
+            Status: 'Enabled',
+            Filter: { Prefix: r.prefix },
+            Expiration: { Days: r.expirationDays },
+          })),
+        },
+      }),
+    );
+  }
+
   async uploadStream(
     key: string,
     body: Readable,
@@ -89,7 +117,6 @@ export class StorageService {
     if (!body || typeof (body as any).pipe !== 'function') {
       throw new Error('S3 GetObject returned empty body');
     }
-
     await new Promise<void>((resolve, reject) => {
       const out = fs.createWriteStream(filePath);
       (body as Readable).pipe(out);

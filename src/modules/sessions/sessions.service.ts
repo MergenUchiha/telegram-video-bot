@@ -26,13 +26,8 @@ export class SessionsService {
       where: { userId, isActive: true },
       data: { isActive: false },
     });
-
     return this.prisma.renderSession.create({
-      data: {
-        userId,
-        isActive: true,
-        state: RenderSessionState.WAIT_VIDEO,
-      },
+      data: { userId, isActive: true, state: RenderSessionState.WAIT_VIDEO },
     });
   }
 
@@ -141,6 +136,27 @@ export class SessionsService {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
       data: { advancedKeepWithTts: enabled },
+    });
+  }
+
+  /**
+   * Кастомный duck level в дБ для политики DUCK.
+   * null = использовать DEFAULT_DUCK_DB из конфига (-18).
+   */
+  async setCustomDuckDb(sessionId: string, duckDb: number | null) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { customDuckDb: duckDb } as any,
+    });
+  }
+
+  /**
+   * Сохраняем ID сообщения настроек для последующего редактирования.
+   */
+  async setLastBotMessageId(sessionId: string, messageId: number | null) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { lastBotMessageId: messageId },
     });
   }
 }

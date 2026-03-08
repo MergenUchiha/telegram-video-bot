@@ -2,6 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { RenderSessionState } from '@prisma/client';
 import { execa } from 'execa';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -12,10 +13,12 @@ import { QUEUE_RENDER } from '../modules/redis/redis.constants';
 import { SessionsService } from '../modules/sessions/sessions.service';
 import { StorageService } from '../modules/storage/storage.service';
 import { ProgressService } from '../modules/redis/progress.service';
+import { LockService } from '../modules/redis/lock.service';
 import { TelegramSenderService } from '../modules/telegram-sender/telegram-sender.service';
 import { TtsService } from '../modules/tts/tts.service';
 import { MediaProbeService } from '../modules/media-probe/media-probe.service';
 import { SubtitlesService } from '../modules/subtitles/subtitles.service';
+import { MetricsService } from '../modules/metrics/metrics.service';
 
 type RenderJobPayload = { sessionId: string; userId: string; chatId: string };
 
@@ -27,61 +30,87 @@ export class RenderProcessor extends WorkerHost {
     private readonly sessions: SessionsService,
     private readonly storage: StorageService,
     private readonly progress: ProgressService,
+    private readonly lock: LockService,
     private readonly config: ConfigService,
     private readonly tg: TelegramSenderService,
     private readonly tts: TtsService,
     private readonly probe: MediaProbeService,
     private readonly subs: SubtitlesService,
+    private readonly metrics: MetricsService,
   ) {
     super();
     this.logger.log('RenderProcessor initialized');
   }
 
   async process(job: Job<RenderJobPayload>): Promise<void> {
-    const { sessionId, chatId } = job.data;
+    const { sessionId, userId, chatId } = job.data;
+    const startedAt = new Date();
 
     const tmpRoot =
       this.config.get<string>('RENDER_TMP_DIR') ||
       path.join(os.tmpdir(), 'renderer');
-
     const ffmpegPath = this.config.get<string>('FFMPEG_PATH') || 'ffmpeg';
     const outW = Number(this.config.get<string>('OUTPUT_WIDTH', '1080'));
     const outH = Number(this.config.get<string>('OUTPUT_HEIGHT', '1920'));
-
     const renderTimeoutMs = Number(
       this.config.get<string>('RENDER_TIMEOUT_MS') || '1200000',
-    ); // 20m default
-    const duckDb = Number(this.config.get<string>('DEFAULT_DUCK_DB') || '-18');
+    );
+    const configDuckDb = Number(
+      this.config.get<string>('DEFAULT_DUCK_DB') || '-18',
+    );
 
     const tmpDir = path.join(tmpRoot, sessionId);
     fs.mkdirSync(tmpDir, { recursive: true });
 
     const inPath = path.join(tmpDir, 'input.mp4');
     const outPath = path.join(tmpDir, 'out.mp4');
-
     const ttsWav = path.join(tmpDir, 'tts.wav');
     const ttsNormWav = path.join(tmpDir, 'tts_norm.wav');
-
     const srtPath = path.join(tmpDir, 'subs.srt');
     const assPath = path.join(tmpDir, 'subs.ass');
+    const overlayTextFile = path.join(tmpDir, 'overlay.txt');
 
     const clip = (s: any, max = 1800) => {
       const str = String(s ?? '');
-      if (str.length <= max) return str;
-      return `…(truncated, last ${max} chars)\n${str.slice(-max)}`;
+      return str.length <= max ? str : `…(truncated)\n${str.slice(-max)}`;
     };
+
+    // ── Distributed lock — защита при горизонтальном масштабировании ─────────
+    // При нескольких репликах воркера BullMQ гарантирует доставку задачи
+    // только одному воркеру, но лок даёт дополнительную защиту на случай
+    // edge-case'ов при race condition на старте/рестарте.
+    const lockResult = await this.lock.acquireUserRenderLock(userId, sessionId);
+    if (!lockResult.ok) {
+      this.logger.warn(
+        `Lock busy for user ${userId}, session ${sessionId} — skipping`,
+      );
+      return; // Не бросаем, не ретраим — задача уже обрабатывается другим воркером
+    }
+    const lockKey = lockResult.key;
+
+    // Продлеваем лок каждую минуту пока рендер идёт
+    const lockRefreshInterval = setInterval(async () => {
+      const ok = await this.lock.refreshLock(lockKey, sessionId);
+      if (!ok)
+        this.logger.warn(`Lock lost mid-render for session ${sessionId}`);
+    }, 60_000);
 
     try {
       await this.progress.setStatus(sessionId, {
         state: 'RENDERING',
         updatedAt: new Date().toISOString(),
-        message: 'Worker picked up job',
+        message: 'Воркер принял задачу',
       });
       await this.progress.setProgress(sessionId, 5);
 
       const session = await this.sessions.getSessionById(sessionId);
       if (!session) throw new Error(`Session not found: ${sessionId}`);
       if (!session.sourceVideoKey) throw new Error('sourceVideoKey missing');
+
+      const duckDb =
+        typeof (session as any).customDuckDb === 'number'
+          ? (session as any).customDuckDb
+          : configDuckDb;
 
       await this.storage.downloadToFile(session.sourceVideoKey, inPath);
       await this.progress.setProgress(sessionId, 15);
@@ -92,11 +121,11 @@ export class RenderProcessor extends WorkerHost {
 
       await this.progress.setProgress(sessionId, 20);
 
-      // --- VIDEO FILTER (base + optional overlay + optional hard subs)
+      // ── VIDEO FILTER ──────────────────────────────────────────────────────
       const base = `scale=${outW}:${outH}:force_original_aspect_ratio=increase,crop=${outW}:${outH}`;
       let vf = base;
 
-      const overlayEnabled = (session as any).overlayEnabled;
+      const overlayEnabled = Boolean((session as any).overlayEnabled);
       const overlayComment = (session as any).overlayComment as string | null;
 
       if (overlayEnabled && overlayComment) {
@@ -104,46 +133,37 @@ export class RenderProcessor extends WorkerHost {
           'FONT_PATH',
           'C:\\Windows\\Fonts\\arial.ttf',
         );
+        const wrapped = this.wrapText(overlayComment.toUpperCase(), 22);
 
-        const wrapped = this.wrapText(overlayComment.toUpperCase(), 26, 3);
-
-        const escaped = wrapped
-          .replace(/\\/g, '\\\\')
-          .replace(/\n/g, '\\n')
-          .replace(/:/g, '\\:')
-          .replace(/'/g, "\\'");
-
+        // textfile= вместо text= — реальные \n из файла, никакого escaping
+        await fs.promises.writeFile(overlayTextFile, wrapped, 'utf-8');
         const fontEsc = fontPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
+        const textFileEsc = overlayTextFile
+          .replace(/\\/g, '\\\\')
+          .replace(/:/g, '\\:');
 
         vf =
           `${vf},drawtext=fontfile='${fontEsc}':` +
-          `text='${escaped}':` +
-          `fontcolor=black:` +
-          `fontsize=86:` +
-          `line_spacing=18:` +
-          `box=1:` +
-          `boxcolor=white@0.85:` +
-          `boxborderw=40:` +
-          `shadowcolor=black@0.25:` +
-          `shadowx=2:` +
-          `shadowy=2:` +
-          `x=(w-text_w)/2:` +
-          `y=h-520`;
+          `textfile='${textFileEsc}':` +
+          `fontcolor=black:fontsize=72:line_spacing=14:` +
+          `box=1:boxcolor=white@0.85:boxborderw=36:` +
+          `shadowcolor=black@0.25:shadowx=2:shadowy=2:` +
+          `x=(w-text_w)/2:y=h-text_h-160`;
       }
 
-      // --- TTS + SUBS
+      // ── TTS + SUBS ────────────────────────────────────────────────────────
       const ttsEnabled = Boolean((session as any).ttsEnabled);
       const ttsText = ((session as any).ttsText as string | null)?.trim() || '';
       const subtitlesMode =
         ((session as any).subtitlesMode as 'NONE' | 'HARD' | 'SOFT') ?? 'NONE';
 
       if (ttsEnabled) {
-        if (!ttsText) throw new Error('TTS enabled but ttsText is empty');
+        if (!ttsText) throw new Error('TTS включён, но ttsText пуст');
 
         await this.progress.setStatus(sessionId, {
           state: 'RENDERING',
           updatedAt: new Date().toISOString(),
-          message: 'Generating TTS...',
+          message: 'Генерирую TTS...',
         });
 
         await this.tts.synthesizeToWav(ttsWav, {
@@ -154,8 +174,6 @@ export class RenderProcessor extends WorkerHost {
         });
 
         await this.progress.setProgress(sessionId, 35);
-
-        // loudnorm
         await this.runFfmpeg(
           ffmpegPath,
           [
@@ -168,28 +186,23 @@ export class RenderProcessor extends WorkerHost {
           ],
           renderTimeoutMs,
         );
-
         await this.progress.setProgress(sessionId, 45);
 
         if (subtitlesMode === 'HARD') {
           await this.progress.setStatus(sessionId, {
             state: 'RENDERING',
             updatedAt: new Date().toISOString(),
-            message: 'Generating subtitles...',
+            message: 'Генерирую субтитры...',
           });
-
-          // MVP: тайминги по длительности входного видео (можно по tts длительности позже)
           await this.subs.makeSrt(srtPath, ttsText, meta.durationSec || 10);
           await this.subs.srtToAss(assPath, srtPath);
-
           const assEsc = assPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
           vf = `${vf},ass='${assEsc}'`;
-
           await this.progress.setProgress(sessionId, 55);
         }
       }
 
-      // --- AUDIO POLICY
+      // ── AUDIO POLICY ─────────────────────────────────────────────────────
       const policy =
         ((session as any).originalAudioPolicy as
           | 'REPLACE'
@@ -198,16 +211,10 @@ export class RenderProcessor extends WorkerHost {
           | 'KEEP') ?? 'KEEP';
       const advancedKeepWithTts = Boolean((session as any).advancedKeepWithTts);
 
-      // ✅ ВАЖНО: сперва все -i, потом фильтры
       const inputs: string[] = ['-y', '-i', inPath];
-      const useTtsAudio = ttsEnabled;
+      if (ttsEnabled) inputs.push('-i', ttsNormWav);
 
-      if (useTtsAudio) {
-        inputs.push('-i', ttsNormWav);
-      }
-
-      // видео-настройки (после инпутов!)
-      const videoArgs: string[] = [
+      const videoArgs = [
         '-vf',
         vf,
         '-c:v',
@@ -219,38 +226,20 @@ export class RenderProcessor extends WorkerHost {
         '-r',
         String(Math.round(fps * 1000) / 1000),
       ];
-
       const outArgs: string[] = [];
 
-      if (!useTtsAudio) {
-        // no TTS: KEEP/MUTE only
-        if (!hasAudio || policy === 'MUTE') {
-          outArgs.push('-an');
-        } else {
-          // можно copy, можно aac — оставим copy как было
-          outArgs.push('-c:a', 'copy');
-        }
-        outArgs.push(outPath);
-
-        await this.progress.setProgress(sessionId, 70);
-        await this.runFfmpeg(
-          ffmpegPath,
-          [...inputs, ...videoArgs, ...outArgs],
-          renderTimeoutMs,
+      if (!ttsEnabled) {
+        outArgs.push(
+          ...(!hasAudio || policy === 'MUTE' ? ['-an'] : ['-c:a', 'copy']),
+          outPath,
         );
       } else {
-        // with TTS
-        // if no original audio — DUCK/KEEP behave like REPLACE
-        const effectivePolicy = hasAudio
+        const eff = hasAudio
           ? policy
-          : policy === 'KEEP'
+          : policy === 'KEEP' || policy === 'DUCK'
             ? 'REPLACE'
-            : policy === 'DUCK'
-              ? 'REPLACE'
-              : policy;
-
-        if (effectivePolicy === 'REPLACE' || effectivePolicy === 'MUTE') {
-          // only TTS audio
+            : policy;
+        if (eff === 'REPLACE' || eff === 'MUTE') {
           outArgs.push(
             '-map',
             '0:v:0',
@@ -262,20 +251,10 @@ export class RenderProcessor extends WorkerHost {
             '192k',
             outPath,
           );
-
-          await this.progress.setProgress(sessionId, 70);
-          await this.runFfmpeg(
-            ffmpegPath,
-            [...inputs, ...videoArgs, ...outArgs],
-            renderTimeoutMs,
-          );
-        } else if (effectivePolicy === 'DUCK') {
-          // duck original + mix with tts
-          const duck = Number.isFinite(duckDb) ? duckDb : -18;
-
+        } else if (eff === 'DUCK') {
           outArgs.push(
             '-filter_complex',
-            `[0:a]volume=${duck}dB[a0];[a0][1:a]amix=inputs=2:duration=first:dropout_transition=0[a]`,
+            `[0:a]volume=${duckDb}dB[a0];[a0][1:a]amix=inputs=2:duration=first:dropout_transition=0[a]`,
             '-map',
             '0:v:0',
             '-map',
@@ -286,15 +265,8 @@ export class RenderProcessor extends WorkerHost {
             '192k',
             outPath,
           );
-
-          await this.progress.setProgress(sessionId, 70);
-          await this.runFfmpeg(
-            ffmpegPath,
-            [...inputs, ...videoArgs, ...outArgs],
-            renderTimeoutMs,
-          );
         } else {
-          // KEEP with TTS:
+          // KEEP
           if (!advancedKeepWithTts) {
             outArgs.push(
               '-map',
@@ -307,15 +279,7 @@ export class RenderProcessor extends WorkerHost {
               '192k',
               outPath,
             );
-
-            await this.progress.setProgress(sessionId, 70);
-            await this.runFfmpeg(
-              ffmpegPath,
-              [...inputs, ...videoArgs, ...outArgs],
-              renderTimeoutMs,
-            );
           } else {
-            // advanced: mix without duck
             outArgs.push(
               '-filter_complex',
               `[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0[a]`,
@@ -329,46 +293,61 @@ export class RenderProcessor extends WorkerHost {
               '192k',
               outPath,
             );
-
-            await this.progress.setProgress(sessionId, 70);
-            await this.runFfmpeg(
-              ffmpegPath,
-              [...inputs, ...videoArgs, ...outArgs],
-              renderTimeoutMs,
-            );
           }
         }
       }
 
+      await this.progress.setProgress(sessionId, 70);
+      await this.progress.setStatus(sessionId, {
+        state: 'RENDERING',
+        updatedAt: new Date().toISOString(),
+        message: 'FFmpeg обрабатывает...',
+      });
+
+      await this.runFfmpeg(
+        ffmpegPath,
+        [...inputs, ...videoArgs, ...outArgs],
+        renderTimeoutMs,
+      );
       await this.progress.setProgress(sessionId, 80);
 
       const outKey = `outputs/${sessionId}/${randomUUID()}.mp4`;
       await this.storage.uploadFile(outKey, outPath, 'video/mp4');
       await this.sessions.setOutputVideoKey(sessionId, outKey);
-
       await this.progress.setProgress(sessionId, 90);
 
       const url = await this.storage.presignGetUrl(outKey);
-
       try {
-        await this.tg.sendVideoFile(chatId, outPath, '✅ Render done');
-        await this.progress.setStatus(sessionId, {
-          state: 'RENDER_DONE',
-          updatedAt: new Date().toISOString(),
-          message: 'Done. Sent as video.',
-        });
+        await this.tg.sendVideoFile(chatId, outPath, '✅ Рендер завершён!');
       } catch {
-        await this.tg.sendVideoByUrl(chatId, url, '✅ Render done (link)');
-        await this.progress.setStatus(sessionId, {
-          state: 'RENDER_DONE',
-          updatedAt: new Date().toISOString(),
-          message: `Done. Link sent.`,
-        });
+        await this.tg.sendVideoByUrl(
+          chatId,
+          url,
+          '✅ Рендер завершён! (ссылка)',
+        );
       }
 
+      await this.sessions.setState(sessionId, RenderSessionState.RENDER_DONE);
+      await this.progress.setStatus(sessionId, {
+        state: 'RENDER_DONE',
+        updatedAt: new Date().toISOString(),
+        message: 'Готово',
+      });
       await this.progress.setProgress(sessionId, 100);
+
+      // ── Метрики ───────────────────────────────────────────────────────────
+      const finishedAt = new Date();
+      await this.metrics
+        .recordJobDone({
+          sessionId,
+          durationMs: finishedAt.getTime() - startedAt.getTime(),
+          startedAt: startedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+        })
+        .catch(() => {});
     } catch (e: any) {
       const msg = clip(e?.message || String(e), 1600);
+      const finishedAt = new Date();
 
       await this.progress.setLastError(sessionId, msg);
       await this.progress.setStatus(sessionId, {
@@ -376,10 +355,34 @@ export class RenderProcessor extends WorkerHost {
         updatedAt: new Date().toISOString(),
         message: msg,
       });
+      try {
+        await this.sessions.setState(
+          sessionId,
+          RenderSessionState.RENDER_FAILED,
+        );
+      } catch {}
+
+      await this.metrics
+        .recordJobFailed({
+          sessionId,
+          durationMs: finishedAt.getTime() - startedAt.getTime(),
+          startedAt: startedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          error: msg.slice(0, 500),
+        })
+        .catch(() => {});
+
+      await this.tg
+        .sendMessage(
+          chatId,
+          `❌ Рендер завершился с ошибкой:\n${msg.slice(0, 1000)}`,
+        )
+        .catch(() => {});
 
       throw e;
     } finally {
-      // tmp cleanup
+      clearInterval(lockRefreshInterval);
+      await this.lock.releaseLock(lockKey, sessionId).catch(() => {});
       try {
         await fs.promises.rm(tmpDir, { recursive: true, force: true });
       } catch {}
@@ -399,50 +402,40 @@ export class RenderProcessor extends WorkerHost {
       });
       if (res.all) this.logger.debug(res.all);
     } catch (e: any) {
-      // execa кидает исключение, но там часто есть e.all (stdout+stderr)
       const all = e?.all ? String(e.all) : '';
-      const baseMsg = e?.message || String(e);
-
       const clip = (s: string, max = 2400) =>
-        s.length <= max
-          ? s
-          : `…(truncated, last ${max} chars)\n${s.slice(-max)}`;
-
-      const merged =
-        all && all.trim().length
-          ? `${baseMsg}\n\nffmpeg output:\n${clip(all, 2400)}`
-          : baseMsg;
-
+        s.length <= max ? s : `…\n${s.slice(-max)}`;
+      const merged = all?.trim()
+        ? `${e?.message}\n\nffmpeg output:\n${clip(all, 2400)}`
+        : String(e?.message);
       this.logger.error(clip(merged, 2400));
-      // пробрасываем дальше — это увидит верхний catch и сохранит в Redis
       throw new Error(clip(merged, 2400));
     }
   }
 
-  private wrapText(text: string, maxLineLen = 26, maxLines = 3) {
+  private wrapText(text: string, maxLineLen = 22): string {
     const words = text.trim().split(/\s+/);
     const lines: string[] = [];
     let line = '';
-
     for (const w of words) {
-      const next = line ? `${line} ${w}` : w;
-      if (next.length <= maxLineLen) {
-        line = next;
+      const candidate = line ? `${line} ${w}` : w;
+      if (candidate.length <= maxLineLen) {
+        line = candidate;
       } else {
         if (line) lines.push(line);
-        line = w;
-        if (lines.length >= maxLines - 1) break;
+        if (w.length > maxLineLen) {
+          let rest = w;
+          while (rest.length > maxLineLen) {
+            lines.push(rest.slice(0, maxLineLen));
+            rest = rest.slice(maxLineLen);
+          }
+          line = rest;
+        } else {
+          line = w;
+        }
       }
     }
-
-    if (line && lines.length < maxLines) lines.push(line);
-
-    const usedWords = lines.join(' ').split(/\s+/).length;
-    if (usedWords < words.length) {
-      lines[lines.length - 1] =
-        `${lines[lines.length - 1].replace(/\.*$/, '')}…`;
-    }
-
+    if (line) lines.push(line);
     return lines.join('\n');
   }
 }

@@ -11,21 +11,23 @@ import { TelegramSenderModule } from './modules/telegram-sender/telegram-sender.
 import { TtsModule } from './modules/tts/tts.module';
 import { MediaProbeModule } from './modules/media-probe/media-probe.module';
 import { SubtitlesModule } from './modules/subtitles/subtitles.module';
+import { MetricsModule } from './modules/metrics/metrics.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
-    BotModule,
     RedisModule,
-    QueuesModule,
-    WorkerModule,
     StorageModule,
     TelegramFilesModule,
     TelegramSenderModule,
     TtsModule,
     MediaProbeModule,
     SubtitlesModule,
+    QueuesModule,
+    BotModule,
+    WorkerModule,
+    MetricsModule, // GET /metrics endpoint
   ],
 })
 export class AppModule {}

@@ -6,6 +6,7 @@ import { StorageModule } from '../storage/storage.module';
 import { TelegramFilesModule } from '../telegram-files/telegram-files.module';
 import { QueuesModule } from '../queues/queues.module';
 import { RedisModule } from '../redis/redis.module';
+import { RateLimitService } from './rate-limit.service';
 
 @Module({
   imports: [
@@ -15,6 +16,6 @@ import { RedisModule } from '../redis/redis.module';
     QueuesModule,
     RedisModule,
   ],
-  providers: [BotService, BotUpdate],
+  providers: [BotService, BotUpdate, RateLimitService],
 })
 export class BotModule {}

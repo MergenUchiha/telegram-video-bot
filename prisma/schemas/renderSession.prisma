@@ -15,7 +15,6 @@ model RenderSession {
   voiceId            String?             @map("voice_id")
   ttsSpeed           Float?              @map("tts_speed")
 
-
   subtitlesMode      SubtitlesMode       @default(NONE) @map("subtitles_mode")
 
   overlayEnabled     Boolean             @default(false) @map("overlay_enabled")
@@ -23,6 +22,9 @@ model RenderSession {
 
   originalAudioPolicy OriginalAudioPolicy @default(DUCK) @map("original_audio_policy")
   advancedKeepWithTts Boolean            @default(false) @map("advanced_keep_with_tts")
+
+  /// Duck level в дБ для политики DUCK. null = DEFAULT_DUCK_DB из конфига (-18 dB).
+  customDuckDb       Int?                @map("custom_duck_db")
 
   outputWidth        Int                 @default(1080) @map("output_width")
   outputHeight       Int                 @default(1920) @map("output_height")

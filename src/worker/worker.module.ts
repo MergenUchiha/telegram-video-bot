@@ -10,11 +10,13 @@ import { SessionsModule } from '../modules/sessions/sessions.module';
 import { StorageModule } from '../modules/storage/storage.module';
 import { PrismaModule } from '../modules/prisma/prisma.module';
 import { TelegramSenderModule } from '../modules/telegram-sender/telegram-sender.module';
+import { TtsModule } from '../modules/tts/tts.module';
+import { MediaProbeModule } from '../modules/media-probe/media-probe.module';
+import { SubtitlesModule } from '../modules/subtitles/subtitles.module';
+import { MetricsModule } from '../modules/metrics/metrics.module';
 
 import { RenderProcessor } from './render.processor';
-import { TtsModule } from 'src/modules/tts/tts.module';
-import { MediaProbeModule } from 'src/modules/media-probe/media-probe.module';
-import { SubtitlesModule } from 'src/modules/subtitles/subtitles.module';
+import { CleanupService } from './cleanup.service';
 
 @Module({
   imports: [
@@ -34,7 +36,8 @@ import { SubtitlesModule } from 'src/modules/subtitles/subtitles.module';
     TtsModule,
     MediaProbeModule,
     SubtitlesModule,
+    MetricsModule,
   ],
-  providers: [RenderProcessor],
+  providers: [RenderProcessor, CleanupService],
 })
 export class WorkerModule {}
