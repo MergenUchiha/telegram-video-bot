@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { RenderSession } from '@prisma/client';
 import { FfmpegService } from './ffmpeg.service';
@@ -8,6 +7,7 @@ import { ProgressService } from '../../modules/redis/progress.service';
 import { TtsService } from '../../modules/tts/tts.service';
 import { MediaProbeService } from '../../modules/media-probe/media-probe.service';
 import { SubtitlesService } from '../../modules/subtitles/subtitles.service';
+import { TextCardService } from '../../modules/text-card/text-card.service';
 
 export interface StandardRenderOptions {
   session: RenderSession;
@@ -25,6 +25,7 @@ export class StandardRenderService {
     private readonly tts: TtsService,
     private readonly probe: MediaProbeService,
     private readonly subs: SubtitlesService,
+    private readonly textCard: TextCardService,
   ) {}
 
   async render({ session, tmpDir }: StandardRenderOptions): Promise<string> {
@@ -43,8 +44,13 @@ export class StandardRenderService {
 
     let vf = this.ffmpeg.buildScaleCropFilter();
 
-    // Overlay comment
-    vf = await this.buildOverlayFilter(vf, session, paths.overlayText);
+    // Overlay comment — через ASS (корректная кириллица, без emoji-крашей)
+    vf = await this.buildOverlayFilter(
+      vf,
+      session,
+      paths.overlayAss,
+      meta.durationSec || 10,
+    );
 
     // TTS generation
     const ttsEnabled = Boolean(session.ttsEnabled);
@@ -118,23 +124,32 @@ export class StandardRenderService {
       ttsNormWav: path.join(tmpDir, 'tts_norm.wav'),
       srt: path.join(tmpDir, 'subs.srt'),
       ass: path.join(tmpDir, 'subs.ass'),
-      overlayText: path.join(tmpDir, 'overlay.txt'),
+      overlayAss: path.join(tmpDir, 'overlay.ass'), // ← ASS вместо .txt
     };
   }
 
+  /**
+   * Строит overlay через ASS-субтитры (вместо drawtext).
+   * Это решает:
+   *   - кракозябры/квадраты с кириллицей (drawtext требует корректный fontfile)
+   *   - emoji-краши (emoji стрипаются в makeOverlayAss)
+   *   - обрезку текста (libass сам переносит по WrapStyle=1)
+   */
   private async buildOverlayFilter(
     baseFilter: string,
     session: RenderSession,
-    overlayTextFile: string,
+    overlayAssFile: string,
+    durationSec: number,
   ): Promise<string> {
     if (!session.overlayEnabled || !session.overlayComment) return baseFilter;
 
-    const wrapped = this.ffmpeg.wrapText(
-      session.overlayComment.toUpperCase(),
-      22,
+    await this.textCard.makeOverlayAss(
+      overlayAssFile,
+      session.overlayComment,
+      durationSec,
     );
-    await this.ffmpeg.writeTextFile(overlayTextFile, wrapped);
-    return this.ffmpeg.buildOverlayFilter(baseFilter, wrapped, overlayTextFile);
+
+    return this.ffmpeg.appendOverlayAssFilter(baseFilter, overlayAssFile);
   }
 
   private buildFfmpegArgs(opts: {

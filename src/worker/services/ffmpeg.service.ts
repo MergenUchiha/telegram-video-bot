@@ -34,6 +34,7 @@ export class FfmpegService {
     return this.config.get<string>('MUSIC_VOLUME_DB') ?? '-18';
   }
 
+  /** @deprecated fontPath используется только как fallback; overlay теперь через ASS */
   get fontPath(): string {
     return (
       this.config.get<string>('FONT_PATH') ?? 'C:\\Windows\\Fonts\\arial.ttf'
@@ -87,22 +88,13 @@ export class FfmpegService {
     return `${baseFilter},ass='${assEsc}'`;
   }
 
-  /** Добавляет drawtext overlay к video filter */
-  buildOverlayFilter(
-    baseFilter: string,
-    text: string,
-    textFilePath: string,
-  ): string {
-    const fontEsc = this.escapeFilterPath(this.fontPath);
-    const textFileEsc = this.escapeFilterPath(textFilePath);
-    return (
-      `${baseFilter},drawtext=fontfile='${fontEsc}':` +
-      `textfile='${textFileEsc}':` +
-      `fontcolor=black:fontsize=72:line_spacing=14:` +
-      `box=1:boxcolor=white@0.85:boxborderw=36:` +
-      `shadowcolor=black@0.25:shadowx=2:shadowy=2:` +
-      `x=(w-text_w)/2:y=h-text_h-160`
-    );
+  /**
+   * Добавляет overlay-комментарий через ASS (заменяет старый drawtext).
+   * Принимает путь к готовому .ass файлу (создаётся в TextCardService.makeOverlayAss).
+   */
+  appendOverlayAssFilter(baseFilter: string, assPath: string): string {
+    // Используем тот же механизм что и для субтитров — ass filter
+    return this.appendAssFilter(baseFilter, assPath);
   }
 
   /** Экранирует путь для использования в ffmpeg filtergraph */
@@ -121,7 +113,11 @@ export class FfmpegService {
     await fs.promises.writeFile(filePath, content, 'utf-8');
   }
 
-  wrapText(text: string, maxLineLen = 22): string {
+  /**
+   * Перенос текста по словам.
+   * maxLineLen=18 — оптимально для кириллицы при fontsize=64 на 1080px
+   */
+  wrapText(text: string, maxLineLen = 18): string {
     const words = text.trim().split(/\s+/);
     const lines: string[] = [];
     let line = '';
