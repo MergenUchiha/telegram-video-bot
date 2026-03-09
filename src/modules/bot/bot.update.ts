@@ -1,13 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { Bot, InlineKeyboard } from 'grammy';
 import { SessionsService } from '../sessions/sessions.service';
-import { RenderSessionState } from '@prisma/client';
+import { ContentMode, RenderSessionState } from '@prisma/client';
 import { StorageService } from '../storage/storage.service';
 import { TelegramFilesService } from '../telegram-files/telegram-files.service';
 import { ProgressService } from '../redis/progress.service';
 import { QueuesService } from '../queues/queues.service';
 import { RateLimitService } from './rate-limit.service';
+import { BackgroundLibraryService } from '../library/background-library.service';
+import { MusicLibraryService } from '../library/music-library.service';
+import { JokesParserService } from '../jokes/jokes-parser.service';
+import { JokesCacheService } from '../jokes/jokes-cache.service';
+import { UsedJokesService } from '../jokes/used-jokes.service';
 import { randomUUID } from 'node:crypto';
+import * as path from 'node:path';
 
 type WaitType =
   | 'comment'
@@ -26,28 +32,33 @@ export class BotUpdate {
     private readonly queues: QueuesService,
     private readonly progress: ProgressService,
     private readonly rateLimit: RateLimitService,
+    private readonly bgLibrary: BackgroundLibraryService,
+    private readonly musicLibrary: MusicLibraryService,
+    private readonly jokesParser: JokesParserService,
+    private readonly jokesCache: JokesCacheService,
+    private readonly usedJokes: UsedJokesService,
   ) {}
 
   register(bot: Bot) {
-    // ── Состояния ожидания ввода ─────────────────────────────────────────────
-    // sessionId → { type, settingsMsgId } — что ждём и ID сообщения настроек
     const waiting = new Map<
       string,
       { type: WaitType; settingsMsgId: number }
     >();
-    // sessionId → messageId — ID временного prompt-сообщения
     const promptMsgIds = new Map<string, number>();
 
-    // ── Регистрация команд в меню / ──────────────────────────────────────────
+    // ── Регистрация команд ───────────────────────────────────────────────
     void bot.api.setMyCommands([
       { command: 'new', description: '🎬 Новая сессия рендера' },
+      {
+        command: 'auto',
+        description: '🎭 Spanish Jokes Auto — ролик автоматически',
+      },
       { command: 'status', description: '📊 Статус рендера' },
       { command: 'settings', description: '⚙️ Настройки текущей сессии' },
       { command: 'start', description: '👋 Приветствие и помощь' },
     ]);
 
-    // ── Rate limit middleware ────────────────────────────────────────────────
-    // Применяется ко всем входящим сообщениям и callback'ам
+    // ── Rate limit middleware ─────────────────────────────────────────────
     bot.use(async (ctx, next) => {
       const userId = String(ctx.from?.id ?? 'unknown');
       const rl = await this.rateLimit.check(userId);
@@ -60,12 +71,12 @@ export class BotUpdate {
             await ctx.reply(msg);
           }
         } catch {}
-        return; // не вызываем next — отбиваем запрос
+        return;
       }
       return next();
     });
 
-    // ── Вспомогательные функции ───────────────────────────────────────────────
+    // ── Вспомогательные функции ──────────────────────────────────────────
 
     const getUser = (ctx: any) =>
       this.sessions.getOrCreateUser(String(ctx.from?.id), String(ctx.chat?.id));
@@ -82,25 +93,33 @@ export class BotUpdate {
       } catch {}
     };
 
-    // Текст блока настроек
+    // ── Текст блока настроек ──────────────────────────────────────────────
+
     const buildText = (
       session: any,
       title = '⚙️ Настройки рендера',
     ): string => {
+      const isAuto = session.contentMode === ContentMode.SPANISH_JOKES_AUTO;
+
+      if (isAuto) {
+        return buildAutoText(session, title);
+      }
+      return buildStandardText(session, title);
+    };
+
+    const buildStandardText = (session: any, title: string): string => {
       const hasVideo = Boolean(session.sourceVideoKey);
       const tts = Boolean(session.ttsEnabled);
       const subs = String(session.subtitlesMode ?? 'NONE');
       const audio = String(session.originalAudioPolicy ?? 'DUCK');
-      const duckDb =
-        (session as any).customDuckDb != null
-          ? (session as any).customDuckDb
-          : -18;
+      const duckDb = session.customDuckDb != null ? session.customDuckDb : -18;
       const overlayEnabled = Boolean(session.overlayEnabled);
       const comment = session.overlayComment as string | null;
       const keepWithTts = Boolean(session.advancedKeepWithTts);
 
       const lines: string[] = [title, ''];
       lines.push(`🎬 Видео: ${hasVideo ? 'загружено ✅' : 'не загружено ❌'}`);
+      lines.push(`🎭 Режим: Стандартный`);
       lines.push('');
       lines.push(
         `🔊 Звук: ${audio}${audio === 'DUCK' ? `  (duck ${duckDb} dB)` : ''}`,
@@ -121,14 +140,53 @@ export class BotUpdate {
             : '(нет)'
         }`,
       );
-      if (keepWithTts) lines.push('');
-      if (keepWithTts) lines.push('⚠️ Advanced: KEEP+TTS включён');
-
+      if (keepWithTts) {
+        lines.push('');
+        lines.push('⚠️ Advanced: KEEP+TTS включён');
+      }
       return lines.join('\n');
     };
 
-    // Основная клавиатура с чекмарками
+    const buildAutoText = (session: any, title: string): string => {
+      const autoPublish = Boolean((session as any).autoPublishYoutube);
+      const preset = (session as any).textCardPreset ?? 'default';
+      const bgKey = (session as any).backgroundVideoKey as string | null;
+      const bgFixed = (session as any).fixedBackgroundVideoKey as string | null;
+      const musicFixed = (session as any).fixedBackgroundMusicKey as
+        | string
+        | null;
+
+      const videoLabel = bgFixed
+        ? `📌 ${path.basename(bgFixed)}`
+        : bgKey
+          ? `📌 ${path.basename(bgKey)}`
+          : '🎲 Случайное из библиотеки';
+      const musicLabel = musicFixed
+        ? `📌 ${path.basename(musicFixed)}`
+        : '🎲 Случайная из библиотеки';
+
+      const lines: string[] = [title, ''];
+      lines.push(`🎭 Режим: Spanish Jokes Auto ✓`);
+      lines.push('');
+      lines.push(`🎬 Видео: ${videoLabel}`);
+      lines.push(`🎵 Музыка: ${musicLabel}`);
+      lines.push(`🃏 Стиль карточки: ${preset}`);
+      lines.push(`📺 Авто-YouTube: ${autoPublish ? 'ВКЛ ✓' : 'ВЫКЛ'}`);
+      return lines.join('\n');
+    };
+
+    // ── Клавиатуры ─────────────────────────────────────────────────────────
+
     const buildKeyboard = (session: any): InlineKeyboard => {
+      const isAuto = session.contentMode === ContentMode.SPANISH_JOKES_AUTO;
+
+      if (isAuto) {
+        return buildAutoKeyboard(session);
+      }
+      return buildStandardKeyboard(session);
+    };
+
+    const buildStandardKeyboard = (session: any): InlineKeyboard => {
       const tts = Boolean(session.ttsEnabled);
       const subs = String(session.subtitlesMode ?? 'NONE');
       const audio = String(session.originalAudioPolicy ?? 'DUCK');
@@ -141,6 +199,10 @@ export class BotUpdate {
         audio === val ? `${label} ✓` : label;
 
       const kb = new InlineKeyboard();
+
+      // Переключатель режима
+      kb.text('🎭 Переключить → Spanish Jokes Auto', 's:mode_toggle').row();
+
       kb.text(tts ? '🗣 TTS: ВКЛ ✓' : '🗣 TTS: ВЫКЛ', 's:tts_toggle').row();
 
       if (tts) {
@@ -167,16 +229,42 @@ export class BotUpdate {
       kb.text('⚙️ Advanced', 's:advanced').row();
       kb.text('✅ Рендерить!', 'do:approve').row();
       kb.text('🗑 Отменить сессию', 'do:cancel');
+      return kb;
+    };
 
+    const buildAutoKeyboard = (session: any): InlineKeyboard => {
+      const autoPublish = Boolean((session as any).autoPublishYoutube);
+      const preset = (session as any).textCardPreset ?? 'default';
+      const bgFixed = (session as any).fixedBackgroundVideoKey as string | null;
+      const musicFixed = (session as any).fixedBackgroundMusicKey as
+        | string
+        | null;
+
+      const videoBtn = bgFixed
+        ? `🎬 Видео: ${path.basename(bgFixed).slice(0, 20)}… ✓`
+        : '🎬 Видео: случайное 🎲';
+      const musicBtn = musicFixed
+        ? `🎵 Музыка: ${path.basename(musicFixed).slice(0, 20)}… ✓`
+        : '🎵 Музыка: случайная 🎲';
+
+      const kb = new InlineKeyboard();
+      kb.text('🎬 Переключить → Стандартный', 's:mode_toggle').row();
+      kb.text(videoBtn, 'auto:pick_video').row();
+      kb.text(musicBtn, 'auto:pick_music').row();
+      kb.text(`🃏 Стиль: ${preset}`, 'auto:preset_cycle').row();
+      kb.text(
+        autoPublish ? '📺 Авто-YouTube: ВКЛ ✓' : '📺 Авто-YouTube: ВЫКЛ',
+        'auto:toggle_youtube',
+      ).row();
+      kb.text('🔍 Статус парсинга', 'auto:jokes_status').row();
+      kb.text('✅ Запустить Auto!', 'do:approve').row();
+      kb.text('🗑 Отменить сессию', 'do:cancel');
       return kb;
     };
 
     const buildAdvancedKeyboard = (session: any): InlineKeyboard => {
       const keepWithTts = Boolean(session.advancedKeepWithTts);
-      const duckDb =
-        (session as any).customDuckDb != null
-          ? (session as any).customDuckDb
-          : -18;
+      const duckDb = session.customDuckDb != null ? session.customDuckDb : -18;
       return new InlineKeyboard()
         .text(`🔊 KEEP+TTS: ${keepWithTts ? 'ВКЛ ✓' : 'ВЫКЛ'}`, 'adv:keep_tts')
         .row()
@@ -185,7 +273,8 @@ export class BotUpdate {
         .text('⬅️ Назад к настройкам', 'adv:back');
     };
 
-    // Отредактировать сообщение настроек или отправить новое
+    // ── Отправка/редактирование сообщения настроек ────────────────────────
+
     const sendOrEditSettings = async (
       ctx: any,
       session: any,
@@ -194,20 +283,18 @@ export class BotUpdate {
       const text = buildText(session);
       const kb = buildKeyboard(session);
       const chatId = String(ctx.chat?.id);
-      const msgId = targetMsgId ?? (session as any).lastBotMessageId ?? null;
+      const msgId = targetMsgId ?? session.lastBotMessageId ?? null;
 
       if (msgId) {
         try {
           await ctx.api.editMessageText(chatId, msgId, text, {
             reply_markup: kb,
           });
-          if ((session as any).lastBotMessageId !== msgId) {
+          if (session.lastBotMessageId !== msgId) {
             await this.sessions.setLastBotMessageId(session.id, msgId);
           }
           return msgId as number;
-        } catch {
-          // Сообщение не изменилось или устарело — отправим новое
-        }
+        } catch {}
       }
 
       const msg = await ctx.reply(text, { reply_markup: kb });
@@ -215,7 +302,6 @@ export class BotUpdate {
       return msg.message_id as number;
     };
 
-    // Отправить prompt и запомнить его для последующего удаления
     const sendPrompt = async (
       ctx: any,
       sessionId: string,
@@ -228,14 +314,12 @@ export class BotUpdate {
       waiting.set(sessionId, { type, settingsMsgId });
     };
 
-    // Получить сессию из callback
     const cbGetSession = async (ctx: any) => {
       const user = await getUser(ctx);
       const session = await this.sessions.getActiveSession(user.id);
       return { user, session };
     };
 
-    // Применить изменение и обновить сообщение настроек
     const applyAndRefresh = async (
       ctx: any,
       sessionId: string,
@@ -249,20 +333,25 @@ export class BotUpdate {
       await ctx.answerCallbackQuery(toast ? { text: toast } : {});
     };
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
     // КОМАНДЫ
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
 
     bot.command('start', async (ctx) => {
       await ctx.reply(
-        '👋 Привет! Я обрабатываю видео: TTS-озвучка, субтитры, комментарий снизу.\n\n' +
-          'Как начать:\n' +
-          '1. /new — создать новую сессию\n' +
-          '2. Отправь видео\n' +
-          '3. Настрой параметры и нажми ✅ Рендерить!\n\n' +
-          'Другие команды:\n' +
-          '/settings — открыть настройки\n' +
-          '/status — проверить прогресс',
+        '👋 Привет! Я обрабатываю видео для блогера.\n\n' +
+          '🎬 Стандартный режим:\n' +
+          '  1. /new — создать сессию\n' +
+          '  2. Отправь видео\n' +
+          '  3. Настрой TTS / субтитры / звук\n' +
+          '  4. ✅ Рендерить!\n\n' +
+          '🎭 Spanish Jokes Auto:\n' +
+          '  /auto — запустить автоматически\n' +
+          '  (видео + анекдот + музыка — всё само)\n\n' +
+          'Команды:\n' +
+          '/settings — настройки\n' +
+          '/status — прогресс\n' +
+          '/new — новая сессия',
       );
     });
 
@@ -288,11 +377,49 @@ export class BotUpdate {
       await ctx.reply('🎬 Новая сессия создана.\nОтправь видео чтобы начать.');
     });
 
+    /**
+     * /auto — Spanish Jokes Auto mode
+     * Создаёт сессию в режиме SPANISH_JOKES_AUTO, видео не нужно.
+     * Сессия сразу READY_TO_RENDER.
+     */
+    bot.command('auto', async (ctx) => {
+      const user = await getUser(ctx);
+      const session = await this.sessions.getActiveSession(user.id);
+
+      if (session) {
+        const s = session.state;
+        if (
+          s === RenderSessionState.RENDER_QUEUED ||
+          s === RenderSessionState.RENDERING
+        ) {
+          return ctx.reply(
+            '⏳ Рендер выполняется. Дождись завершения, потом /auto.',
+          );
+        }
+        clearWaiting(session.id);
+      }
+
+      const newSession = await this.sessions.createSpanishJokesSession(user.id);
+      clearWaiting(newSession.id);
+
+      await ctx.reply(
+        '🎭 Spanish Jokes Auto\n\n' +
+          'Бот автоматически:\n' +
+          '  📖 Возьмёт свежий испанский анекдот\n' +
+          '  🎬 Выберет фоновое видео из библиотеки\n' +
+          '  🎵 Подберёт фоновую музыку\n' +
+          '  🃏 Наложит стильную карточку с текстом\n\n' +
+          'Настрой параметры и жми ✅ Запустить Auto!',
+      );
+
+      await sendOrEditSettings(ctx, newSession);
+    });
+
     bot.command('settings', async (ctx) => {
       const user = await getUser(ctx);
       const session = await this.sessions.getActiveSession(user.id);
-      if (!session) return ctx.reply('Нет активной сессии. Используй /new.');
-      // Сбрасываем lastBotMessageId чтобы отправить свежее сообщение
+      if (!session)
+        return ctx.reply('Нет активной сессии. Используй /new или /auto.');
       await this.sessions.setLastBotMessageId(session.id, null);
       await sendOrEditSettings(ctx, session);
     });
@@ -316,13 +443,12 @@ export class BotUpdate {
           lastError.length > 400 ? '…' + lastError.slice(-400) : lastError;
         lines.push(`Ошибка: ${err}`);
       }
-
       await ctx.reply(lines.join('\n'));
     });
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
     // ВИДЕО
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
 
     bot.on('message:video', async (ctx) => {
       const user = await getUser(ctx);
@@ -361,22 +487,329 @@ export class BotUpdate {
       });
       await this.sessions.setSourceVideoKey(session.id, key);
       await this.sessions.setOverlayComment(session.id, null);
-      await this.sessions.setState(
-        session.id,
-        RenderSessionState.WAIT_TEXT_OR_SETTINGS,
-      );
-      await this.sessions.setLastBotMessageId(session.id, null); // сбросить — будем создавать свежее
 
-      // Удалить сообщение "Загружаю..."
+      // Если текущий режим Auto — видео используется как кастомный фон
+      if ((session as any).contentMode === ContentMode.SPANISH_JOKES_AUTO) {
+        await this.sessions.setState(
+          session.id,
+          RenderSessionState.READY_TO_RENDER,
+        );
+      } else {
+        await this.sessions.setState(
+          session.id,
+          RenderSessionState.WAIT_TEXT_OR_SETTINGS,
+        );
+      }
+
+      await this.sessions.setLastBotMessageId(session.id, null);
       await tryDelete(ctx, uploadMsg.message_id);
 
       const refreshed = await this.sessions.getSessionById(session.id);
       await sendOrEditSettings(ctx, refreshed);
     });
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // CALLBACKS — НАСТРОЙКИ
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
+    // CALLBACKS — ПЕРЕКЛЮЧАТЕЛЬ РЕЖИМА
+    // ════════════════════════════════════════════════════════════════════════
+
+    bot.callbackQuery('s:mode_toggle', async (ctx) => {
+      const { session } = await cbGetSession(ctx);
+      if (!session)
+        return ctx.answerCallbackQuery({ text: 'Нет сессии. /new' });
+
+      const isAuto =
+        (session as any).contentMode === ContentMode.SPANISH_JOKES_AUTO;
+      const newMode = isAuto
+        ? ContentMode.STANDARD
+        : ContentMode.SPANISH_JOKES_AUTO;
+      await this.sessions.setContentMode(session.id, newMode);
+
+      // При переключении в Auto — READY_TO_RENDER (видео не нужно)
+      // При переключении в Standard — учитываем, есть ли видео
+      if (newMode === ContentMode.SPANISH_JOKES_AUTO) {
+        await this.sessions.setState(
+          session.id,
+          RenderSessionState.READY_TO_RENDER,
+        );
+      } else if (session.sourceVideoKey) {
+        await this.sessions.setState(
+          session.id,
+          RenderSessionState.WAIT_TEXT_OR_SETTINGS,
+        );
+      } else {
+        await this.sessions.setState(session.id, RenderSessionState.WAIT_VIDEO);
+      }
+
+      await applyAndRefresh(
+        ctx,
+        session.id,
+        `Режим: ${newMode === ContentMode.SPANISH_JOKES_AUTO ? 'Spanish Jokes Auto 🎭' : 'Стандартный 🎬'}`,
+      );
+    });
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CALLBACKS — SPANISH JOKES AUTO
+    // ════════════════════════════════════════════════════════════════════════
+
+    // Цикличное переключение пресета карточки
+    const PRESETS = ['default', 'dark', 'light', 'minimal'];
+    bot.callbackQuery('auto:preset_cycle', async (ctx) => {
+      const { session } = await cbGetSession(ctx);
+      if (!session) return ctx.answerCallbackQuery({ text: 'Нет сессии' });
+      const current = (session as any).textCardPreset ?? 'default';
+      const idx = PRESETS.indexOf(current);
+      const next = PRESETS[(idx + 1) % PRESETS.length];
+      await this.sessions.setTextCardPreset(session.id, next);
+      await applyAndRefresh(ctx, session.id, `Стиль карточки: ${next}`);
+    });
+
+    bot.callbackQuery('auto:toggle_youtube', async (ctx) => {
+      const { session } = await cbGetSession(ctx);
+      if (!session) return ctx.answerCallbackQuery({ text: 'Нет сессии' });
+      const enabled = !Boolean((session as any).autoPublishYoutube);
+      await this.sessions.setAutoPublishYoutube(session.id, enabled);
+      await applyAndRefresh(
+        ctx,
+        session.id,
+        `Авто-YouTube: ${enabled ? 'ВКЛ' : 'ВЫКЛ'}`,
+      );
+    });
+
+    // ── Выбор конкретного фонового видео ─────────────────────────────────
+
+    bot.callbackQuery('auto:pick_video', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const { session } = await cbGetSession(ctx);
+      if (!session) return;
+
+      const videos = await this.bgLibrary.listVideos();
+      if (!videos.length) {
+        return ctx.reply(
+          '🎬 Библиотека видео пуста.\n\nЗагрузи видео через /library → «Загрузить видео».',
+        );
+      }
+
+      const kb = new InlineKeyboard();
+      // Кнопка «Случайное»
+      const bgFixed = (session as any).fixedBackgroundVideoKey;
+      kb.text(
+        bgFixed ? '🎲 Случайное (сбросить)' : '🎲 Случайное ✓',
+        'auto:set_video:random',
+      ).row();
+      for (const v of videos) {
+        const name = v.filename.slice(0, 35);
+        const isCurrent = bgFixed === v.key;
+        kb.text(
+          isCurrent ? `✓ ${name}` : name,
+          `auto:set_video:${v.index}`,
+        ).row();
+      }
+      kb.text('⬅️ Назад', 'auto:pick_back');
+      await ctx.reply('🎬 Выбери фоновое видео:', { reply_markup: kb });
+    });
+
+    bot.callbackQuery('auto:set_video:random', async (ctx) => {
+      await ctx.answerCallbackQuery({
+        text: '🎲 Будет выбрано случайное видео',
+      });
+      const { session } = await cbGetSession(ctx);
+      if (!session) return;
+      await this.sessions.setFixedBackgroundVideoKey(session.id, null);
+      try {
+        await ctx.deleteMessage();
+      } catch {}
+      await applyAndRefresh(ctx, session.id, 'Видео: случайное');
+    });
+
+    bot.callbackQuery(/^auto:set_video:(\d+)$/, async (ctx) => {
+      const idx = parseInt(ctx.match[1], 10);
+      const { session } = await cbGetSession(ctx);
+      if (!session) return;
+
+      const videos = await this.bgLibrary.listVideos();
+      const target = videos.find((v) => v.index === idx);
+      if (!target) {
+        return ctx.answerCallbackQuery({ text: '❌ Видео не найдено' });
+      }
+
+      await ctx.answerCallbackQuery({ text: `✅ ${target.filename}` });
+      await this.sessions.setFixedBackgroundVideoKey(session.id, target.key);
+      try {
+        await ctx.deleteMessage();
+      } catch {}
+      await applyAndRefresh(ctx, session.id, `Видео: ${target.filename}`);
+    });
+
+    // ── Выбор конкретного музыкального трека ──────────────────────────────
+
+    bot.callbackQuery('auto:pick_music', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      const { session } = await cbGetSession(ctx);
+      if (!session) return;
+
+      const tracks = await this.musicLibrary.listTracks();
+      if (!tracks.length) {
+        return ctx.reply(
+          '🎵 Музыкальная библиотека пуста.\n\nЗагрузи треки через /library → «Загрузить музыку».',
+        );
+      }
+
+      const kb = new InlineKeyboard();
+      const musicFixed = (session as any).fixedBackgroundMusicKey;
+      kb.text(
+        musicFixed ? '🎲 Случайная (сбросить)' : '🎲 Случайная ✓',
+        'auto:set_music:random',
+      ).row();
+      for (const t of tracks) {
+        const name = t.filename.slice(0, 35);
+        const isCurrent = musicFixed === t.key;
+        kb.text(
+          isCurrent ? `✓ ${name}` : name,
+          `auto:set_music:${t.index}`,
+        ).row();
+      }
+      kb.text('⬅️ Назад', 'auto:pick_back');
+      await ctx.reply('🎵 Выбери музыкальный трек:', { reply_markup: kb });
+    });
+
+    bot.callbackQuery('auto:set_music:random', async (ctx) => {
+      await ctx.answerCallbackQuery({
+        text: '🎲 Будет выбрана случайная музыка',
+      });
+      const { session } = await cbGetSession(ctx);
+      if (!session) return;
+      await this.sessions.setFixedBackgroundMusicKey(session.id, null);
+      try {
+        await ctx.deleteMessage();
+      } catch {}
+      await applyAndRefresh(ctx, session.id, 'Музыка: случайная');
+    });
+
+    bot.callbackQuery(/^auto:set_music:(\d+)$/, async (ctx) => {
+      const idx = parseInt(ctx.match[1], 10);
+      const { session } = await cbGetSession(ctx);
+      if (!session) return;
+
+      const tracks = await this.musicLibrary.listTracks();
+      const target = tracks.find((t) => t.index === idx);
+      if (!target) {
+        return ctx.answerCallbackQuery({ text: '❌ Трек не найден' });
+      }
+
+      await ctx.answerCallbackQuery({ text: `✅ ${target.filename}` });
+      await this.sessions.setFixedBackgroundMusicKey(session.id, target.key);
+      try {
+        await ctx.deleteMessage();
+      } catch {}
+      await applyAndRefresh(ctx, session.id, `Музыка: ${target.filename}`);
+    });
+
+    bot.callbackQuery('auto:pick_back', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      try {
+        await ctx.deleteMessage();
+      } catch {}
+    });
+
+    // ── Статус парсинга анекдотов ─────────────────────────────────────────
+
+    bot.callbackQuery('auto:jokes_status', async (ctx) => {
+      await ctx.answerCallbackQuery();
+      // ВАЖНО: используем DB uuid (user.id), а не Telegram ID (ctx.from.id)
+      // В Redis ключи jokes:used:{userId} хранятся по DB uuid
+      const { user } = await cbGetSession(ctx);
+      const userId = user.id;
+
+      // Сначала показываем статус из кеша мгновенно
+      const meta = await this.jokesCache.getMeta();
+      const stats = meta.cached
+        ? await this.usedJokes.getStats(userId, meta.count)
+        : null;
+
+      const refreshedStr = meta.refreshedAt
+        ? new Date(meta.refreshedAt).toLocaleString('ru')
+        : null;
+
+      const quickLines = [
+        '📊 Статус анекдотов',
+        '',
+        meta.cached
+          ? `✅ Пул: ${meta.count} анекдотов`
+          : '⚠️ Пул пуст — нужен парсинг',
+        refreshedStr ? `🕐 Загружен: ${refreshedStr}` : '',
+        `♻️ Обновится: когда все будут использованы`,
+        '',
+        stats
+          ? [
+              `📌 Твоя история:`,
+              `   Использовано: ${stats.used} из ${stats.total}`,
+              `   Осталось новых: ${stats.remaining}`,
+              `   Прогресс: ${'▓'.repeat(Math.round(stats.percent / 10))}${'░'.repeat(10 - Math.round(stats.percent / 10))} ${stats.percent}%`,
+            ].join('\n')
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const kb = new InlineKeyboard()
+        .text('🔄 Обновить кеш сейчас', 'auto:jokes_refresh')
+        .text('⬅️ Назад', 'auto:pick_back');
+
+      await ctx.reply(quickLines, { reply_markup: kb });
+    });
+
+    bot.callbackQuery('auto:jokes_refresh', async (ctx) => {
+      await ctx.answerCallbackQuery({ text: '⏳ Обновляю...' });
+      const { user } = await cbGetSession(ctx);
+      const userId = user.id;
+      const statusMsg = await ctx.reply(
+        '⏳ Парсю анекдоты со всех источников...\n(10–30 секунд)',
+      );
+
+      try {
+        await this.jokesCache.invalidate();
+        const jokes = await this.jokesCache.refreshCache();
+        const stats = await this.usedJokes.getStats(userId, jokes.length);
+        const ttlMin = Math.round(
+          Number((ctx as any).config?.get?.('JOKES_CACHE_TTL_SEC') ?? 21600) /
+            60,
+        );
+
+        const poolIndicator =
+          jokes.length >= 50 ? '🟢' : jokes.length >= 20 ? '🟡' : '🔴';
+
+        const lines = [
+          '✅ Кеш обновлён!',
+          '',
+          `${poolIndicator} Анекдотов в пуле: ${jokes.length}`,
+          `📌 Твоя история: ${stats.used} использовано`,
+          `🆕 Новых для тебя: ${stats.remaining}`,
+          '',
+          '🔍 Пример:',
+          '─────────────',
+          jokes[Math.floor(Math.random() * Math.min(5, jokes.length))]?.slice(
+            0,
+            200,
+          ) ?? '',
+        ];
+
+        await ctx.api.editMessageText(
+          String(ctx.chat?.id),
+          statusMsg.message_id,
+          lines.join('\n'),
+        );
+      } catch (e: any) {
+        await ctx.api.editMessageText(
+          String(ctx.chat?.id),
+          statusMsg.message_id,
+          `❌ Ошибка: ${e?.message}`,
+        );
+      }
+    });
+
+    // ════════════════════════════════════════════════════════════════════════
+    // CALLBACKS — СТАНДАРТНЫЕ НАСТРОЙКИ
+    // ════════════════════════════════════════════════════════════════════════
 
     bot.callbackQuery('s:tts_toggle', async (ctx) => {
       const { session } = await cbGetSession(ctx);
@@ -484,7 +917,6 @@ export class BotUpdate {
       );
     });
 
-    // Audio policy — общий паттерн через цикл
     const audioPolicies: Array<[string, string, string]> = [
       ['s:audio_replace', 'REPLACE', 'Звук: Replace'],
       ['s:audio_duck', 'DUCK', 'Звук: Duck'],
@@ -500,19 +932,16 @@ export class BotUpdate {
       });
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
     // CALLBACKS — ADVANCED
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
 
     bot.callbackQuery('s:advanced', async (ctx) => {
       await ctx.answerCallbackQuery();
       const { session } = await cbGetSession(ctx);
       if (!session) return;
       const keepWithTts = Boolean(session.advancedKeepWithTts);
-      const duckDb =
-        (session as any).customDuckDb != null
-          ? (session as any).customDuckDb
-          : -18;
+      const duckDb = session.customDuckDb != null ? session.customDuckDb : -18;
       const msgId = ctx.callbackQuery?.message?.message_id as number;
 
       await ctx.api.editMessageText(
@@ -520,7 +949,7 @@ export class BotUpdate {
         msgId,
         `⚙️ Advanced настройки\n\n` +
           `🔊 KEEP+TTS: ${keepWithTts ? 'ВКЛ' : 'ВЫКЛ'}\n` +
-          `  Оставить оригинальный звук И добавить TTS поверх (полное смешивание).\n\n` +
+          `  Оставить оригинальный звук И добавить TTS поверх.\n\n` +
           `🦆 Duck уровень: ${duckDb} dB\n` +
           `  На сколько приглушить оригинал при политике DUCK (-40 до -3).`,
         { reply_markup: buildAdvancedKeyboard(session) },
@@ -576,15 +1005,20 @@ export class BotUpdate {
       await sendOrEditSettings(ctx, session, msgId);
     });
 
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
     // CALLBACKS — ДЕЙСТВИЯ
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
 
     bot.callbackQuery('do:approve', async (ctx) => {
       await ctx.answerCallbackQuery();
       const { user, session } = await cbGetSession(ctx);
       if (!session) return ctx.reply('Нет сессии. /new');
-      if (!session.sourceVideoKey) {
+
+      const isAuto =
+        (session as any).contentMode === ContentMode.SPANISH_JOKES_AUTO;
+
+      // Для стандартного режима — видео обязательно
+      if (!isAuto && !session.sourceVideoKey) {
         return ctx.reply('❌ Видео не загружено. Сначала отправь видео.');
       }
 
@@ -607,10 +1041,11 @@ export class BotUpdate {
 
       clearWaiting(session.id);
 
-      // Заменяем клавиатуру на сводку — рендер запущен
       const msgId = ctx.callbackQuery?.message?.message_id as number;
+      const modeLabel = isAuto ? '🎭 Spanish Jokes Auto' : '🎬 Стандартный';
       const summaryText =
         `⏳ Рендер поставлен в очередь\n\n` +
+        `Режим: ${modeLabel}\n` +
         buildText(session, 'Параметры этого рендера:') +
         `\n\nJob ID: ${job.id}\n/status — следить за прогрессом\n/new — новая сессия после завершения`;
 
@@ -632,14 +1067,14 @@ export class BotUpdate {
         await ctx.api.editMessageText(
           String(ctx.chat?.id),
           msgId,
-          '🗑 Сессия отменена.\n\nОтправь видео чтобы начать новую или /new.',
+          '🗑 Сессия отменена.\n\nОтправь видео (/new) или запусти авторежим (/auto).',
         );
       } catch {}
     });
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // ТЕКСТОВЫЕ СООБЩЕНИЯ — ввод после prompt
-    // ═══════════════════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════════════════════════════
+    // ТЕКСТОВЫЕ СООБЩЕНИЯ
+    // ════════════════════════════════════════════════════════════════════════
 
     bot.on('message:text', async (ctx) => {
       const text = (ctx.message.text || '').trim();
@@ -650,9 +1085,8 @@ export class BotUpdate {
       if (!session) return;
 
       const w = waiting.get(session.id);
-      if (!w) return; // не ждём ввода — игнорируем
+      if (!w) return;
 
-      // Удаляем сообщение пользователя и prompt-подсказку
       await tryDelete(ctx, ctx.message.message_id);
       await tryDelete(ctx, promptMsgIds.get(session.id));
       promptMsgIds.delete(session.id);
@@ -709,20 +1143,18 @@ export class BotUpdate {
             errorMsg = 'Пустой комментарий, попробуй снова.';
             break;
           }
-          await this.sessions.setOverlayComment(session.id, text); // без ограничений по длине (ТЗ 3.3)
+          await this.sessions.setOverlayComment(session.id, text);
           break;
         }
       }
 
       if (errorMsg) {
-        // При ошибке ввода — ставим ожидание обратно и отправляем новый prompt
         const msg = await ctx.reply(errorMsg);
         promptMsgIds.set(session.id, msg.message_id);
         waiting.set(session.id, w);
         return;
       }
 
-      // Успех — обновляем сообщение настроек
       const fresh = await this.sessions.getSessionById(session.id);
       await sendOrEditSettings(ctx, fresh, w.settingsMsgId);
     });

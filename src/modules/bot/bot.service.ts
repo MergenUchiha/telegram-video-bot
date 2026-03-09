@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Bot } from 'grammy';
 import { BotUpdate } from './bot.update';
+import { LibraryBotHandler } from './library-bot.handler';
 
 function formatUnknownError(e: unknown): { message: string; stack?: string } {
   if (e instanceof Error) return { message: e.message, stack: e.stack };
@@ -20,6 +21,7 @@ export class BotService implements OnModuleInit {
   constructor(
     private readonly config: ConfigService,
     private readonly updates: BotUpdate,
+    private readonly libraryHandler: LibraryBotHandler,
   ) {}
 
   async onModuleInit() {
@@ -37,15 +39,16 @@ export class BotService implements OnModuleInit {
       await next();
     });
 
-    // ✅ Ставим обработчик ошибок ДО register/start
     bot.catch((err) => {
       const updateId = err.ctx?.update?.update_id;
-
       const { message, stack } = formatUnknownError(err.error);
-
       this.logger.error(`Bot error on update ${updateId}: ${message}`, stack);
     });
 
+    // ── Регистрируем обработчики ─────────────────────────────────────────
+    // Порядок важен: LibraryBotHandler слушает message:document и message:video
+    // только когда есть флаг awaitingVideoUpload, поэтому конфликта нет.
+    this.libraryHandler.register(bot);
     this.updates.register(bot);
 
     const mode = (

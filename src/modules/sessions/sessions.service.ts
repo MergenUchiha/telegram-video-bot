@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RenderSessionState } from '@prisma/client';
+import { ContentMode, RenderSessionState } from '@prisma/client';
 
 @Injectable()
 export class SessionsService {
@@ -31,10 +31,36 @@ export class SessionsService {
     });
   }
 
+  /**
+   * Создать новую сессию в режиме Spanish Jokes Auto.
+   * Сессия сразу переходит в READY_TO_RENDER — видео пользователя не нужно.
+   */
+  async createSpanishJokesSession(userId: string) {
+    await this.prisma.renderSession.updateMany({
+      where: { userId, isActive: true },
+      data: { isActive: false },
+    });
+    return this.prisma.renderSession.create({
+      data: {
+        userId,
+        isActive: true,
+        state: RenderSessionState.READY_TO_RENDER,
+        contentMode: ContentMode.SPANISH_JOKES_AUTO,
+      },
+    });
+  }
+
   async setState(sessionId: string, state: RenderSessionState) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
       data: { state },
+    });
+  }
+
+  async setContentMode(sessionId: string, mode: ContentMode) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { contentMode: mode },
     });
   }
 
@@ -139,10 +165,6 @@ export class SessionsService {
     });
   }
 
-  /**
-   * Кастомный duck level в дБ для политики DUCK.
-   * null = использовать DEFAULT_DUCK_DB из конфига (-18).
-   */
   async setCustomDuckDb(sessionId: string, duckDb: number | null) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
@@ -150,13 +172,70 @@ export class SessionsService {
     });
   }
 
-  /**
-   * Сохраняем ID сообщения настроек для последующего редактирования.
-   */
   async setLastBotMessageId(sessionId: string, messageId: number | null) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
       data: { lastBotMessageId: messageId },
+    });
+  }
+
+  // ── Spanish Jokes Auto ────────────────────────────────────────────────────
+
+  async setJokeText(sessionId: string, jokeText: string) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { jokeText } as any,
+    });
+  }
+
+  async setJokeSourceUrl(sessionId: string, url: string | null) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { jokeSourceUrl: url } as any,
+    });
+  }
+
+  async setBackgroundVideoKey(sessionId: string, key: string | null) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { backgroundVideoKey: key } as any,
+    });
+  }
+
+  async setBackgroundMusicKey(sessionId: string, key: string | null) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { backgroundMusicKey: key } as any,
+    });
+  }
+
+  async setTextCardPreset(sessionId: string, preset: string) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { textCardPreset: preset } as any,
+    });
+  }
+
+  async setAutoPublishYoutube(sessionId: string, enabled: boolean) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { autoPublishYoutube: enabled } as any,
+    });
+  }
+
+  /** Зафиксировать конкретное фоновое видео (null = случайное из библиотеки) */
+  async setFixedBackgroundVideoKey(sessionId: string, key: string | null) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { fixedBackgroundVideoKey: key } as any,
+    });
+  }
+
+  /** Зафиксировать конкретный музыкальный трек (null = случайный из библиотеки) */
+  async setFixedBackgroundMusicKey(sessionId: string, key: string | null) {
+    return this.prisma.renderSession.update({
+      where: { id: sessionId },
+      data: { fixedBackgroundMusicKey: key } as any,
     });
   }
 }

@@ -12,6 +12,9 @@ import { TtsModule } from './modules/tts/tts.module';
 import { MediaProbeModule } from './modules/media-probe/media-probe.module';
 import { SubtitlesModule } from './modules/subtitles/subtitles.module';
 import { MetricsModule } from './modules/metrics/metrics.module';
+import { JokesModule } from './modules/jokes/jokes.module';
+import { LibraryModule } from './modules/library/library.module';
+import { TextCardModule } from './modules/text-card/text-card.module';
 
 @Module({
   imports: [
@@ -27,7 +30,12 @@ import { MetricsModule } from './modules/metrics/metrics.module';
     QueuesModule,
     BotModule,
     WorkerModule,
-    MetricsModule, // GET /metrics endpoint
+    MetricsModule,
+
+    // ── Stage 3: Spanish Jokes Auto ──────────────────────────────────────
+    JokesModule,
+    LibraryModule,
+    TextCardModule,
   ],
 })
 export class AppModule {}

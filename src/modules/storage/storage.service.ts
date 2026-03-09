@@ -7,6 +7,8 @@ import {
   HeadBucketCommand,
   CreateBucketCommand,
   PutBucketLifecycleConfigurationCommand,
+  ListObjectsV2Command,
+  DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable } from 'stream';
@@ -61,8 +63,6 @@ export class StorageService {
 
   /**
    * Устанавливает lifecycle rules на бакете.
-   * Перезаписывает все существующие правила.
-   * Работает с MinIO (поддерживает S3 lifecycle API).
    */
   async putBucketLifecycle(rules: LifecycleRule[]): Promise<void> {
     await this.s3.send(
@@ -78,6 +78,38 @@ export class StorageService {
         },
       }),
     );
+  }
+
+  /**
+   * Перечислить все объекты в бакете с указанным префиксом.
+   * Обходит пагинацию автоматически (до 10 000 ключей).
+   */
+  async listObjects(prefix: string): Promise<string[]> {
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const res = await this.s3.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          MaxKeys: 1000,
+          ...(continuationToken
+            ? { ContinuationToken: continuationToken }
+            : {}),
+        }),
+      );
+
+      for (const obj of res.Contents ?? []) {
+        if (obj.Key) keys.push(obj.Key);
+      }
+
+      continuationToken = res.IsTruncated
+        ? res.NextContinuationToken
+        : undefined;
+    } while (continuationToken);
+
+    return keys;
   }
 
   async uploadStream(
@@ -130,6 +162,12 @@ export class StorageService {
       this.s3,
       new GetObjectCommand({ Bucket: this.bucket, Key: key }),
       { expiresIn: expiresSec },
+    );
+  }
+
+  async deleteObject(key: string): Promise<void> {
+    await this.s3.send(
+      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
     );
   }
 }

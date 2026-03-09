@@ -6,9 +6,14 @@ model RenderSession {
   state              RenderSessionState  @default(WAIT_VIDEO)
   isActive           Boolean             @default(true) @map("is_active")
 
+  // ── Режим обработки ───────────────────────────────────────────────────────
+  contentMode        ContentMode         @default(STANDARD) @map("content_mode")
+
+  // ── Файлы ────────────────────────────────────────────────────────────────
   sourceVideoKey     String?             @map("source_video_key")
   outputVideoKey     String?             @map("output_video_key")
 
+  // ── TTS ──────────────────────────────────────────────────────────────────
   ttsEnabled         Boolean             @default(false) @map("tts_enabled")
   ttsText            String?             @map("tts_text")
   language           String?             @map("language")
@@ -17,18 +22,42 @@ model RenderSession {
 
   subtitlesMode      SubtitlesMode       @default(NONE) @map("subtitles_mode")
 
+  // ── Overlay comment ───────────────────────────────────────────────────────
   overlayEnabled     Boolean             @default(false) @map("overlay_enabled")
   overlayComment     String?             @map("overlay_comment")
 
+  // ── Звук ─────────────────────────────────────────────────────────────────
   originalAudioPolicy OriginalAudioPolicy @default(DUCK) @map("original_audio_policy")
   advancedKeepWithTts Boolean            @default(false) @map("advanced_keep_with_tts")
 
   /// Duck level в дБ для политики DUCK. null = DEFAULT_DUCK_DB из конфига (-18 dB).
   customDuckDb       Int?                @map("custom_duck_db")
 
+  // ── Spanish Jokes Auto ────────────────────────────────────────────────────
+  /// URL источника анекдотов (null → использовать дефолтный из конфига)
+  jokeSourceUrl      String?             @map("joke_source_url")
+  /// Язык анекдотов (по умолчанию "es")
+  jokeLanguage       String?             @default("es") @map("joke_language")
+  /// Итоговый текст выбранного анекдота (заполняется воркером)
+  jokeText           String?             @map("joke_text")
+  /// S3-ключ фонового видео из библиотеки (заполняется воркером)
+  backgroundVideoKey String?             @map("background_video_key")
+  /// S3-ключ фоновой музыки из библиотеки (заполняется воркером)
+  backgroundMusicKey String?             @map("background_music_key")
+  /// Пресет визуального блока ("default" | "dark" | "light" | "minimal")
+  textCardPreset     String?             @default("default") @map("text_card_preset")
+  /// Автоматически ставить задачу на YouTube-публикацию после рендера
+  autoPublishYoutube Boolean             @default(false) @map("auto_publish_youtube")
+  /// Зафиксированное пользователем фоновое видео (null = случайное из библиотеки)
+  fixedBackgroundVideoKey String?         @map("fixed_background_video_key")
+  /// Зафиксированный пользователем музыкальный трек (null = случайный из библиотеки)
+  fixedBackgroundMusicKey String?         @map("fixed_background_music_key")
+
+  // ── Размер ───────────────────────────────────────────────────────────────
   outputWidth        Int                 @default(1080) @map("output_width")
   outputHeight       Int                 @default(1920) @map("output_height")
 
+  // ── Служебное ────────────────────────────────────────────────────────────
   progress           Int                 @default(0)
   lastError          String?             @map("last_error")
 
@@ -43,5 +72,6 @@ model RenderSession {
 
   @@index([userId, isActive])
   @@index([state])
+  @@index([contentMode])
   @@map("render_sessions")
 }

@@ -14,6 +14,9 @@ import { TtsModule } from '../modules/tts/tts.module';
 import { MediaProbeModule } from '../modules/media-probe/media-probe.module';
 import { SubtitlesModule } from '../modules/subtitles/subtitles.module';
 import { MetricsModule } from '../modules/metrics/metrics.module';
+import { JokesModule } from '../modules/jokes/jokes.module';
+import { LibraryModule } from '../modules/library/library.module';
+import { TextCardModule } from '../modules/text-card/text-card.module';
 
 import { RenderProcessor } from './render.processor';
 import { CleanupService } from './cleanup.service';
@@ -21,13 +24,11 @@ import { CleanupService } from './cleanup.service';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => buildBullMQOptions(config),
     }),
     BullModule.registerQueue({ name: QUEUE_RENDER }),
-
     PrismaModule,
     SessionsModule,
     StorageModule,
@@ -37,6 +38,9 @@ import { CleanupService } from './cleanup.service';
     MediaProbeModule,
     SubtitlesModule,
     MetricsModule,
+    JokesModule,
+    LibraryModule,
+    TextCardModule,
   ],
   providers: [RenderProcessor, CleanupService],
 })
