@@ -3,7 +3,7 @@ import { Bot, InlineKeyboard } from 'grammy';
 import type { RenderSession } from '@prisma/client';
 import { SessionsService } from '../../sessions/sessions.service';
 import { BotContextHelper } from '../bot-context.helper';
-import { WaitStateService } from '../wait-state.service';
+import { WaitStateService } from '../../redis/wait-state/wait-state.service';
 import { AUDIO_POLICIES, AudioPolicy } from '../bot.constants';
 import { advancedPanelText, standardPanelText } from '../panels/index';
 import { advancedKeyboard, standardPanelKeyboard } from '../keyboards/index';
@@ -144,7 +144,7 @@ export class StandardSettingsHandler {
         },
       );
 
-      this.waitState.set(session.id, {
+      await this.waitState.set(session.id, {
         type: 'duck_level',
         panelMsgId,
         promptMsgId: promptMsg.message_id,
@@ -210,7 +210,7 @@ export class StandardSettingsHandler {
           ),
         });
 
-        this.waitState.set(session.id, {
+        await this.waitState.set(session.id, {
           type,
           panelMsgId,
           promptMsgId: promptMsg.message_id,
@@ -223,7 +223,7 @@ export class StandardSettingsHandler {
     bot.callbackQuery(/^cancel_input:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery({ text: 'Отменено' });
       const sessionId = ctx.match[1];
-      this.waitState.delete(sessionId);
+      await this.waitState.delete(sessionId);
       try {
         await ctx.deleteMessage();
       } catch {}

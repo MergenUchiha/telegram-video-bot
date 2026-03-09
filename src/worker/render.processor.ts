@@ -75,6 +75,22 @@ export class RenderProcessor extends WorkerHost {
       const session = await this.sessions.getSessionById(sessionId);
       if (!session) throw new Error(`Session not found: ${sessionId}`);
 
+      // ── Идемпотентность retry ─────────────────────────────────────────────
+      // Если outputVideoKey уже есть — рендер был успешен, но отправка упала.
+      // Просто отправляем уже готовый файл без повторного рендера.
+      if (session.outputVideoKey) {
+        this.logger.warn(
+          `[${sessionId}] outputVideoKey already set — skipping render, resending file`,
+        );
+        await this.resendExistingOutput(
+          sessionId,
+          chatId,
+          session.outputVideoKey,
+          startedAt,
+        );
+        return;
+      }
+
       let outputPath: string;
 
       if (session.contentMode === ContentMode.SPANISH_JOKES_AUTO) {
@@ -85,7 +101,6 @@ export class RenderProcessor extends WorkerHost {
         });
         outputPath = result.outputPath;
 
-        // Помечаем анекдот использованным только после успешного рендера
         await this.usedJokes
           .markUsed(userId, result.jokeText)
           .catch((e: Error) =>
@@ -110,6 +125,41 @@ export class RenderProcessor extends WorkerHost {
     }
   }
 
+  /**
+   * Повторная отправка уже готового файла при retry.
+   * Не рендерит заново — только достаёт из S3 и отправляет.
+   */
+  private async resendExistingOutput(
+    sessionId: string,
+    chatId: string,
+    outputVideoKey: string,
+    startedAt: Date,
+  ): Promise<void> {
+    try {
+      const url = await this.storage.presignGetUrl(outputVideoKey);
+      await this.tg.sendVideoByUrl(
+        chatId,
+        url,
+        '✅ Рендер завершён! (повтор отправки)',
+      );
+      await this.sessions.setState(sessionId, RenderSessionState.RENDER_DONE);
+      await this.setStatus(sessionId, 100, 'Готово', 'RENDER_DONE');
+
+      const finishedAt = new Date();
+      await this.metrics
+        .recordJobDone({
+          sessionId,
+          durationMs: finishedAt.getTime() - startedAt.getTime(),
+          startedAt: startedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+        })
+        .catch(() => {});
+    } catch (e: unknown) {
+      await this.handleFailure(e, sessionId, chatId, startedAt);
+      throw e;
+    }
+  }
+
   private async finalizeAndSend(
     sessionId: string,
     chatId: string,
@@ -117,11 +167,13 @@ export class RenderProcessor extends WorkerHost {
     startedAt: Date,
   ): Promise<void> {
     const outKey = `outputs/${sessionId}/${randomUUID()}.mp4`;
+
+    // Сначала загружаем в S3 и сохраняем ключ — до отправки в Telegram.
+    // Это гарантирует что при retry мы не будем рендерить заново.
     await this.storage.uploadFile(outKey, outputPath, 'video/mp4');
     await this.sessions.setOutputVideoKey(sessionId, outKey);
     await this.progress.setProgress(sessionId, 90);
 
-    // Сначала пытаемся отправить файл напрямую, при ошибке — по ссылке
     try {
       await this.tg.sendVideoFile(chatId, outputPath, '✅ Рендер завершён!');
     } catch {

@@ -7,9 +7,9 @@ import { buildRedisOptions } from './redis.config';
 import { RedisService } from './redis.service';
 import { LockService } from './lock.service';
 import { ProgressService } from './progress.service';
+import { WaitStateService } from './wait-state/wait-state.service';
 
 function formatRedisError(err: any): string {
-  // AggregateError из node:net (internalConnectMultiple)
   const isAgg = err && typeof err === 'object' && Array.isArray(err.errors);
   if (!isAgg) {
     const code = err?.code ? ` code=${err.code}` : '';
@@ -40,13 +40,12 @@ function formatRedisError(err: any): string {
 
         client.on('connect', () => logger.log('connecting...'));
         client.on('ready', () => logger.log('ready'));
-        client.on('reconnecting', (delay) => logger.warn(`reconnecting in ${delay}ms...`));
+        client.on('reconnecting', (delay) =>
+          logger.warn(`reconnecting in ${delay}ms...`),
+        );
         client.on('close', () => logger.warn('connection closed'));
         client.on('end', () => logger.warn('connection ended'));
-
-        client.on('error', (err) => {
-          logger.error(formatRedisError(err));
-        });
+        client.on('error', (err) => logger.error(formatRedisError(err)));
 
         return client;
       },
@@ -54,7 +53,14 @@ function formatRedisError(err: any): string {
     RedisService,
     LockService,
     ProgressService,
+    WaitStateService,
   ],
-  exports: [REDIS_CONNECTION, RedisService, LockService, ProgressService],
+  exports: [
+    REDIS_CONNECTION,
+    RedisService,
+    LockService,
+    ProgressService,
+    WaitStateService,
+  ],
 })
 export class RedisModule {}

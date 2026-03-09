@@ -9,26 +9,53 @@ export interface RateLimitResult {
   resetInSec: number;
 }
 
+export type RateLimitAction = 'command' | 'upload' | 'render';
+
+interface LimitConfig {
+  max: number;
+  windowSec: number;
+}
+
+/**
+ * Rate limiter с раздельными лимитами по типу действия:
+ *   - command: обычные команды/кнопки (30/мин)
+ *   - upload:  загрузка видео (5/час)
+ *   - render:  постановка в очередь рендера (10/сутки)
+ */
 @Injectable()
 export class RateLimitService {
-  private readonly maxRequests: number;
-  private readonly windowSec: number;
+  private readonly limits: Record<RateLimitAction, LimitConfig>;
 
   constructor(
     @Inject(REDIS_CONNECTION) private readonly redis: IORedis,
     private readonly config: ConfigService,
   ) {
-    // Максимум N сообщений за окно X секунд (дефолт: 20 за 60с)
-    this.maxRequests = Number(config.get<string>('RATE_LIMIT_MAX', '20'));
-    this.windowSec = Number(config.get<string>('RATE_LIMIT_WINDOW_SEC', '60'));
+    this.limits = {
+      command: {
+        max: Number(this.config.get('RATE_LIMIT_MAX', '30')),
+        windowSec: Number(this.config.get('RATE_LIMIT_WINDOW_SEC', '60')),
+      },
+      upload: {
+        max: Number(this.config.get('RATE_LIMIT_UPLOAD_MAX', '5')),
+        windowSec: Number(
+          this.config.get('RATE_LIMIT_UPLOAD_WINDOW_SEC', '3600'),
+        ),
+      },
+      render: {
+        max: Number(this.config.get('RATE_LIMIT_RENDER_MAX', '10')),
+        windowSec: Number(
+          this.config.get('RATE_LIMIT_RENDER_WINDOW_SEC', '86400'),
+        ),
+      },
+    };
   }
 
-  /**
-   * Проверяет и инкрементирует счётчик для userId.
-   * Использует скользящее окно на базе INCR + EXPIRE.
-   */
-  async check(userId: string): Promise<RateLimitResult> {
-    const key = `ratelimit:user:${userId}`;
+  async check(
+    userId: string,
+    action: RateLimitAction = 'command',
+  ): Promise<RateLimitResult> {
+    const { max, windowSec } = this.limits[action];
+    const key = `ratelimit:${action}:${userId}`;
 
     const pipeline = this.redis.pipeline();
     pipeline.incr(key);
@@ -38,15 +65,15 @@ export class RateLimitService {
     const count = Number((results?.[0]?.[1] as number) ?? 1);
     let ttl = Number((results?.[1]?.[1] as number) ?? -1);
 
-    // Устанавливаем TTL только при первом обращении (когда ttl == -1 или -2)
     if (ttl < 0) {
-      await this.redis.expire(key, this.windowSec);
-      ttl = this.windowSec;
+      await this.redis.expire(key, windowSec);
+      ttl = windowSec;
     }
 
-    const allowed = count <= this.maxRequests;
-    const remaining = Math.max(0, this.maxRequests - count);
-
-    return { allowed, remaining, resetInSec: ttl };
+    return {
+      allowed: count <= max,
+      remaining: Math.max(0, max - count),
+      resetInSec: ttl,
+    };
   }
 }

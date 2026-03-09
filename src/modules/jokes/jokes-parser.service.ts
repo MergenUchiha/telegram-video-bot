@@ -8,6 +8,8 @@ interface JokeSource {
   selectors: { pattern: RegExp; group: number }[];
 }
 
+const RETRY_DELAYS_MS = [1000, 3000, 7000]; // 3 попытки с экспоненциальным backoff
+
 @Injectable()
 export class JokesParserService {
   private readonly logger = new Logger(JokesParserService.name);
@@ -84,26 +86,6 @@ export class JokesParserService {
       ],
     },
     {
-      name: 'verdesymalos.com',
-      pageUrl: (p) =>
-        p === 1
-          ? 'https://www.verdesymalos.com/chistes-cortos/'
-          : `https://www.verdesymalos.com/chistes-cortos/?page=${p}`,
-      maxPages: 3,
-      selectors: [
-        {
-          pattern:
-            /<div[^>]*class="[^"]*(?:chiste-texto|joke-body|content|texto)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
-          group: 1,
-        },
-        {
-          pattern:
-            /<p[^>]*class="[^"]*(?:chiste|joke|texto)[^"]*"[^>]*>([\s\S]*?)<\/p>/gi,
-          group: 1,
-        },
-      ],
-    },
-    {
       name: 'chistalia.es',
       pageUrl: (p) =>
         p === 1
@@ -114,11 +96,6 @@ export class JokesParserService {
         {
           pattern:
             /<div[^>]*class="[^"]*entry-content[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
-          group: 1,
-        },
-        {
-          pattern:
-            /<div[^>]*class="[^"]*post-content[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
           group: 1,
         },
       ],
@@ -136,31 +113,6 @@ export class JokesParserService {
             /<div[^>]*class="[^"]*(?:post-content|entry-content|chiste-content|joke-body)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
           group: 1,
         },
-        {
-          pattern:
-            /<div[^>]*class="[^"]*(?:td-post-content|tdb-block-inner)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
-          group: 1,
-        },
-      ],
-    },
-    {
-      name: 'chistes.net',
-      pageUrl: (p) =>
-        p === 1
-          ? 'https://www.chistes.net/ChistesCortos.aspx'
-          : `https://www.chistes.net/ChistesCortos.aspx?pagina=${p}`,
-      maxPages: 5,
-      selectors: [
-        {
-          pattern:
-            /<div[^>]*class="[^"]*(?:texto-chiste|chiste-item|joke-item|chiste)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
-          group: 1,
-        },
-        {
-          pattern:
-            /<td[^>]*class="[^"]*(?:fondo2|texto|chiste)[^"]*"[^>]*>([\s\S]*?)<\/td>/gi,
-          group: 1,
-        },
       ],
     },
     {
@@ -174,26 +126,6 @@ export class JokesParserService {
         {
           pattern:
             /<div[^>]*class="[^"]*(?:entry-content|post-content|chiste-content)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
-          group: 1,
-        },
-        {
-          pattern:
-            /<article[^>]*class="[^"]*(?:post|chiste)[^"]*"[^>]*>([\s\S]*?)<\/article>/gi,
-          group: 1,
-        },
-      ],
-    },
-    {
-      name: 'es.chistes.cc',
-      pageUrl: (p) =>
-        p === 1
-          ? 'https://es.chistes.cc/chistes-cortos/'
-          : `https://es.chistes.cc/chistes-cortos/${p}/`,
-      maxPages: 6,
-      selectors: [
-        {
-          pattern:
-            /<div[^>]*class="[^"]*(?:joke|chiste|texto|content-joke)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
           group: 1,
         },
       ],
@@ -229,14 +161,14 @@ export class JokesParserService {
             req.startsWith(normalize(src.name)),
         ),
       );
-      if (filtered.length === 0) {
-        this.logger.warn(
-          `JOKES_SOURCES_ENABLED="${enabledRaw}" matched no sources. Using all.`,
-        );
-      } else {
+      if (filtered.length > 0) {
         activeSources = filtered;
         this.logger.log(
           `Active sources: ${filtered.map((s) => s.name).join(', ')}`,
+        );
+      } else {
+        this.logger.warn(
+          `JOKES_SOURCES_ENABLED="${enabledRaw}" matched no sources. Using all.`,
         );
       }
     }
@@ -245,22 +177,12 @@ export class JokesParserService {
       `Fetching from ${activeSources.length} sources, up to ${pagesPerSource} pages each...`,
     );
 
-    const results = await Promise.allSettled(
-      activeSources.map((src) => this.fetchFromSource(src, pagesPerSource)),
+    // Запускаем параллельно, но с ограничением одновременных запросов (3 за раз)
+    const allJokes = await this.fetchWithConcurrencyLimit(
+      activeSources,
+      pagesPerSource,
+      3,
     );
-
-    const allJokes: string[] = [];
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i];
-      if (r.status === 'fulfilled') {
-        this.logger.log(`✅ ${activeSources[i].name}: ${r.value.length} jokes`);
-        allJokes.push(...r.value);
-      } else {
-        this.logger.warn(
-          `❌ ${activeSources[i].name}: ${r.reason?.message ?? r.reason}`,
-        );
-      }
-    }
 
     const unique = this.deduplicate(allJokes);
     this.logger.log(`Total: ${allJokes.length} raw → ${unique.length} unique`);
@@ -277,6 +199,41 @@ export class JokesParserService {
     return this.shuffle(unique);
   }
 
+  private async fetchWithConcurrencyLimit(
+    sources: JokeSource[],
+    pagesPerSource: number,
+    concurrency: number,
+  ): Promise<string[]> {
+    const allJokes: string[] = [];
+    const queue = [...sources];
+
+    const runBatch = async (): Promise<void> => {
+      const batch = queue.splice(0, concurrency);
+      if (!batch.length) return;
+
+      const results = await Promise.allSettled(
+        batch.map((src) => this.fetchFromSource(src, pagesPerSource)),
+      );
+
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i];
+        if (r.status === 'fulfilled') {
+          this.logger.log(`✅ ${batch[i].name}: ${r.value.length} jokes`);
+          allJokes.push(...r.value);
+        } else {
+          this.logger.warn(
+            `❌ ${batch[i].name}: ${r.reason?.message ?? r.reason}`,
+          );
+        }
+      }
+
+      if (queue.length > 0) await runBatch();
+    };
+
+    await runBatch();
+    return allJokes;
+  }
+
   private async fetchFromSource(
     source: JokeSource,
     maxPages: number,
@@ -289,7 +246,7 @@ export class JokesParserService {
     for (let page = 1; page <= limit; page++) {
       const url = source.pageUrl(page);
       try {
-        const html = await this.fetchHtml(url);
+        const html = await this.fetchHtmlWithRetry(url);
         const found = this.extractFromHtml(html, source.selectors);
 
         if (found.length === 0) {
@@ -312,6 +269,9 @@ export class JokesParserService {
           collectedKeys.add(this.normalizeKey(j));
         }
         this.logger.debug(`${source.name} p${page}: +${newOnes.length}`);
+
+        // Небольшая пауза между страницами одного источника
+        if (page < limit) await this.sleep(300);
       } catch (e: any) {
         this.logger.warn(`${source.name} p${page} error: ${e?.message}`);
         break;
@@ -321,14 +281,44 @@ export class JokesParserService {
     return collected;
   }
 
-  private normalizeKey(text: string): string {
-    return text.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 80);
-  }
-
-  private async fetchHtml(url: string): Promise<string> {
+  /**
+   * Fetch с exponential retry.
+   * Повторяет при сетевых ошибках и 429/503 статусах.
+   */
+  private async fetchHtmlWithRetry(url: string): Promise<string> {
     const timeout = Number(
       this.config.get<string>('JOKES_FETCH_TIMEOUT_MS', '10000'),
     );
+
+    let lastErr: Error | null = null;
+
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        const html = await this.fetchHtml(url, timeout);
+        return html;
+      } catch (e: any) {
+        lastErr = e;
+        const isRetryable =
+          e?.message?.includes('429') ||
+          e?.message?.includes('503') ||
+          e?.message?.includes('ECONNRESET') ||
+          e?.message?.includes('ETIMEDOUT') ||
+          e?.message?.includes('fetch');
+
+        if (!isRetryable || attempt >= RETRY_DELAYS_MS.length) break;
+
+        const delay = RETRY_DELAYS_MS[attempt];
+        this.logger.warn(
+          `${url} failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${e.message}`,
+        );
+        await this.sleep(delay);
+      }
+    }
+
+    throw lastErr ?? new Error(`Failed to fetch ${url}`);
+  }
+
+  private async fetchHtml(url: string, timeout: number): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
 
@@ -349,6 +339,10 @@ export class JokesParserService {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private normalizeKey(text: string): string {
+    return text.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 80);
   }
 
   private extractFromHtml(
@@ -461,8 +455,6 @@ export class JokesParserService {
       /suscríbete/i,
       /newsletter/i,
       /publicidad/i,
-      /categorías/i,
-      /inicio\s*$/i,
       /siguiente página/i,
       /ver más chistes/i,
     ];
@@ -492,5 +484,9 @@ export class JokesParserService {
       [a[i], a[j]] = [a[j], a[i]];
     }
     return a;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

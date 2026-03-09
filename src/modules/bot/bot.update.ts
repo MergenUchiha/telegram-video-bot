@@ -4,9 +4,9 @@ import { ContentMode, RenderSessionState } from '@prisma/client';
 import { SessionsService } from '../sessions/sessions.service';
 import { QueuesService } from '../queues/queues.service';
 import { ProgressService } from '../redis/progress.service';
+import { WaitStateService } from '../redis/wait-state/wait-state.service';
 import { RateLimitService } from './rate-limit.service';
 import { BotContextHelper } from './bot-context.helper';
-import { WaitStateService } from './wait-state.service';
 import { StandardSettingsHandler } from './handlers/standard-settings.handler';
 import { AutoJokesHandler } from './handlers/auto-jokes.handler';
 import { TextInputHandler } from './handlers/text-input.handler';
@@ -42,7 +42,6 @@ export class BotUpdate {
     this.registerStatusCallbacks(bot);
     this.registerRenderCallback(bot);
 
-    // Делегируем обработку конкретным хэндлерам
     this.videoUploadHandler.register(bot);
     this.standardSettingsHandler.register(bot);
     this.autoJokesHandler.register(bot);
@@ -59,7 +58,7 @@ export class BotUpdate {
   private registerRateLimitMiddleware(bot: Bot): void {
     bot.use(async (ctx, next) => {
       const uid = String(ctx.from?.id ?? 'unknown');
-      const rl = await this.rateLimit.check(uid);
+      const rl = await this.rateLimit.check(uid, 'command');
       if (!rl.allowed) {
         const msg = `⏳ Слишком много запросов. Попробуй через ${rl.resetInSec}с.`;
         try {
@@ -115,7 +114,7 @@ export class BotUpdate {
         String(ctx.chat?.id),
       );
       const session = await this.sessions.getActiveSession(user.id);
-      if (session) this.waitState.delete(session.id);
+      if (session) await this.waitState.delete(session.id);
 
       const msgId = ctx.callbackQuery.message?.message_id as number;
       await this.helper.editPanel(
@@ -145,7 +144,7 @@ export class BotUpdate {
             show_alert: true,
           });
         }
-        this.waitState.delete(existing.id);
+        await this.waitState.delete(existing.id);
       }
 
       const session = await this.sessions.createSpanishJokesSession(user.id);
@@ -174,7 +173,7 @@ export class BotUpdate {
             show_alert: true,
           });
         }
-        this.waitState.delete(existing.id);
+        await this.waitState.delete(existing.id);
       }
 
       const session = await this.sessions.createNewSession(user.id);
@@ -245,6 +244,15 @@ export class BotUpdate {
       const session = await this.sessions.getActiveSession(user.id);
       if (!session) return ctx.reply('Нет сессии. /start');
 
+      // Rate limit на рендер (10/сутки)
+      const rl = await this.rateLimit.check(String(ctx.from?.id), 'render');
+      if (!rl.allowed) {
+        return ctx.answerCallbackQuery({
+          text: `⏳ Лимит рендеров исчерпан. Сброс через ${Math.ceil(rl.resetInSec / 3600)}ч.`,
+          show_alert: true,
+        });
+      }
+
       const isAuto = session.contentMode === ContentMode.SPANISH_JOKES_AUTO;
 
       if (!isAuto && !session.sourceVideoKey) {
@@ -272,7 +280,7 @@ export class BotUpdate {
         message: 'В очереди',
       });
       await this.progress.setProgress(session.id, 0);
-      this.waitState.delete(session.id);
+      await this.waitState.delete(session.id);
 
       const job = await this.queues.enqueueRender({
         sessionId: session.id,
@@ -322,7 +330,7 @@ export class BotUpdate {
       return;
     }
 
-    if (session) this.waitState.delete(session.id);
+    if (session) await this.waitState.delete(session.id);
 
     await ctx.reply(MAIN_MENU_TEXT, {
       reply_markup: mainMenuKeyboard(),

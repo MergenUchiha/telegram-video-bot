@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+const MAX_CHARS_PER_SUBTITLE = 60; // макс символов в одном блоке субтитра
+const MIN_CHARS_PER_SUBTITLE = 15; // минимум — не делим слишком мелко
+
 @Injectable()
 export class SubtitlesService {
   async makeSrt(
@@ -40,25 +43,96 @@ export class SubtitlesService {
     await fs.promises.writeFile(outPath, ass, 'utf-8');
   }
 
+  /**
+   * Разбивает текст на фразы для субтитров.
+   *
+   * Логика:
+   * 1. Сначала пробуем разбить по пунктуации (.!?;)
+   * 2. Если фразы слишком длинные — разбиваем по запятым/союзам
+   * 3. Если всё ещё длинно — нарезаем по MAX_CHARS_PER_SUBTITLE
+   * 4. Объединяем слишком короткие куски с соседями
+   */
   private splitToPhrases(text: string): string[] {
     const raw = (text || '').trim();
     if (!raw) return [];
 
-    const parts = raw
+    // Шаг 1: разбивка по конечной пунктуации
+    let parts = raw
       .replace(/\s+/g, ' ')
-      .split(/(?<=[.!?])\s+/)
+      .split(/(?<=[.!?;])\s+/)
       .map((s) => s.trim())
       .filter(Boolean);
 
-    if (parts.length <= 1 && raw.length > 60) {
-      const out: string[] = [];
-      for (let i = 0; i < raw.length; i += 42) {
-        out.push(raw.slice(i, i + 42).trim());
+    // Шаг 2: длинные части разбиваем по запятым или союзам
+    parts = parts.flatMap((p) => {
+      if (p.length <= MAX_CHARS_PER_SUBTITLE) return [p];
+      return this.splitByCommaOrConjunction(p);
+    });
+
+    // Шаг 3: всё ещё длинные — нарезаем по символам
+    parts = parts.flatMap((p) => {
+      if (p.length <= MAX_CHARS_PER_SUBTITLE) return [p];
+      return this.splitByLength(p, MAX_CHARS_PER_SUBTITLE);
+    });
+
+    // Шаг 4: объединяем слишком короткие куски
+    return this.mergeShortParts(parts, MIN_CHARS_PER_SUBTITLE);
+  }
+
+  private splitByCommaOrConjunction(text: string): string[] {
+    // Разбиваем по запятой или перед союзами (pero, y, que, porque, ...)
+    const result = text
+      .split(/(?<=,)\s+|(?=\s+(?:pero|aunque|porque|cuando|mientras|que)\s)/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    return result.length > 1 ? result : [text];
+  }
+
+  private splitByLength(text: string, maxLen: number): string[] {
+    const words = text.split(/\s+/);
+    const chunks: string[] = [];
+    let current = '';
+
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (candidate.length <= maxLen) {
+        current = candidate;
+      } else {
+        if (current) chunks.push(current);
+        current =
+          word.length > maxLen
+            ? (chunks.push(word.slice(0, maxLen)), word.slice(maxLen))
+            : word;
       }
-      return out.filter(Boolean);
     }
 
-    return parts;
+    if (current) chunks.push(current);
+    return chunks;
+  }
+
+  private mergeShortParts(parts: string[], minLen: number): string[] {
+    if (parts.length <= 1) return parts;
+
+    const result: string[] = [];
+    let buffer = '';
+
+    for (const part of parts) {
+      if (!buffer) {
+        buffer = part;
+        continue;
+      }
+      const merged = `${buffer} ${part}`;
+      if (buffer.length < minLen && merged.length <= MAX_CHARS_PER_SUBTITLE) {
+        buffer = merged;
+      } else {
+        result.push(buffer);
+        buffer = part;
+      }
+    }
+
+    if (buffer) result.push(buffer);
+    return result;
   }
 
   private toSrtTime(sec: number): string {

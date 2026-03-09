@@ -14,14 +14,15 @@ export class TextCardService {
   ): Promise<void> {
     const endTime = this.toAssTime(Math.max(1, durationSec));
     const wrappedText = this.wrapForAss(text.trim());
-    const style = this.getStyle(preset);
+    const fontSize = this.calcFontSize(text);
+    const style = this.getStyle(preset, fontSize);
 
     const ass = [
       '[Script Info]',
       'ScriptType: v4.00+',
       'PlayResX: 1080',
       'PlayResY: 1920',
-      'WrapStyle: 0',
+      'WrapStyle: 1',
       'ScaledBorderAndShadow: yes',
       '',
       '[V4+ Styles]',
@@ -39,7 +40,8 @@ export class TextCardService {
 
   /**
    * Создаёт ASS-файл для overlay-комментария (внизу видео).
-   * Заменяет drawtext — корректно работает с кириллицей и не крашится на emoji.
+   * Заменяет drawtext — корректно работает с кириллицей,
+   * emoji автоматически стрипаются.
    */
   async makeOverlayAss(
     outPath: string,
@@ -47,13 +49,12 @@ export class TextCardService {
     durationSec: number,
   ): Promise<void> {
     const endTime = this.toAssTime(Math.max(1, durationSec));
-    // Убираем emoji — они не рендерятся стандартными шрифтами в ffmpeg/libass
     const clean = this.stripEmoji(text.trim().toUpperCase());
+    const fontSize = this.calcFontSize(clean);
     const wrapped = this.wrapForAss(clean);
 
     // Alignment=2 — нижний центр; MarginV=120 — отступ снизу
-    const style =
-      'Style: Overlay,Arial,64,&H00000000,&H000000FF,&H00FFFFFF,&HCCFFFFFF,-1,0,0,0,100,100,0,0,3,4,0,2,60,60,120,1';
+    const style = `Style: Overlay,Arial,${fontSize},&H00000000,&H000000FF,&H00FFFFFF,&HCCFFFFFF,-1,0,0,0,100,100,0,0,3,4,0,2,60,60,120,1`;
 
     const ass = [
       '[Script Info]',
@@ -76,8 +77,23 @@ export class TextCardService {
     await fs.promises.writeFile(outPath, ass, 'utf-8');
   }
 
+  /**
+   * Динамически уменьшает размер шрифта для длинных текстов,
+   * чтобы они не выходили за пределы экрана 1080x1920.
+   */
+  private calcFontSize(text: string): number {
+    const len = text.length;
+    if (len < 120) return 62;
+    if (len < 220) return 54;
+    if (len < 350) return 46;
+    return 38;
+  }
+
+  /**
+   * Убирает emoji и non-BMP символы — libass их не рендерит
+   * и они дают квадраты или крашат рендер.
+   */
   private stripEmoji(text: string): string {
-    // Убираем emoji и прочие non-BMP символы которые libass не отображает
     return text
       .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}\u{FE00}-\u{FEFF}]/gu, '')
       .replace(/\s{2,}/g, ' ')
@@ -91,15 +107,12 @@ export class TextCardService {
       .replace(/\n/g, '{\\N}');
   }
 
-  private getStyle(preset: TextCardPreset): string {
+  private getStyle(preset: TextCardPreset, fontSize: number): string {
     const styles: Record<TextCardPreset, string> = {
-      default:
-        'Style: JokeCard,Arial,58,&H00FFFFFF,&H000000FF,&H00000000,&H99111111,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1',
-      dark: 'Style: JokeCard,Arial,58,&H00FFFFFF,&H000000FF,&H00000000,&HFF000000,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1',
-      light:
-        'Style: JokeCard,Arial,58,&H00000000,&H000000FF,&H00FFFFFF,&HCFFFFFFF,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1',
-      minimal:
-        'Style: JokeCard,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,5,1,5,90,90,0,1',
+      default: `Style: JokeCard,Arial,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H99111111,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1`,
+      dark: `Style: JokeCard,Arial,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&HFF000000,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1`,
+      light: `Style: JokeCard,Arial,${fontSize},&H00000000,&H000000FF,&H00FFFFFF,&HCFFFFFFF,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1`,
+      minimal: `Style: JokeCard,Arial,${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,5,1,5,90,90,0,1`,
     };
     return styles[preset] ?? styles['default'];
   }

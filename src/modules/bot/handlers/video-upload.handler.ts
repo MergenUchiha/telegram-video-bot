@@ -6,9 +6,12 @@ import { SessionsService } from '../../sessions/sessions.service';
 import { StorageService } from '../../storage/storage.service';
 import { TelegramFilesService } from '../../telegram-files/telegram-files.service';
 import { BotContextHelper } from '../bot-context.helper';
-import { WaitStateService } from '../wait-state.service';
+import { WaitStateService } from '../../redis/wait-state/wait-state.service';
+import { RateLimitService } from '../rate-limit.service';
 import { standardPanelText } from '../panels/index';
 import { standardPanelKeyboard } from '../keyboards/index';
+
+const MAX_VIDEO_SIZE_BYTES = 200 * 1024 * 1024; // 200 MB
 
 @Injectable()
 export class VideoUploadHandler {
@@ -18,6 +21,7 @@ export class VideoUploadHandler {
     private readonly tgFiles: TelegramFilesService,
     private readonly helper: BotContextHelper,
     private readonly waitState: WaitStateService,
+    private readonly rateLimit: RateLimitService,
   ) {}
 
   register(bot: Bot): void {
@@ -47,9 +51,32 @@ export class VideoUploadHandler {
         return;
       }
 
-      // В авто-режиме видео не принимаем от пользователя
       if (session.contentMode === ContentMode.SPANISH_JOKES_AUTO) {
         await this.helper.tryDeleteMessage(ctx, ctx.message.message_id);
+        return;
+      }
+
+      // Rate limit на загрузку видео
+      const rl = await this.rateLimit.check(String(ctx.from?.id), 'upload');
+      if (!rl.allowed) {
+        await this.helper.tryDeleteMessage(ctx, ctx.message.message_id);
+        await ctx.reply(
+          `⏳ Слишком много загрузок. Попробуй через ${Math.ceil(rl.resetInSec / 60)} мин.\n` +
+            `Лимит: 5 видео в час.`,
+        );
+        return;
+      }
+
+      // Проверка размера до скачивания
+      const fileSize = ctx.message.video.file_size;
+      if (fileSize && fileSize > MAX_VIDEO_SIZE_BYTES) {
+        await this.helper.tryDeleteMessage(ctx, ctx.message.message_id);
+        const sizeMb = Math.round(fileSize / 1024 / 1024);
+        await ctx.reply(
+          `❌ Файл слишком большой: ${sizeMb} МБ.\n` +
+            `Максимальный размер: 200 МБ.\n\n` +
+            `Сожми видео перед отправкой или обрежь лишнее.`,
+        );
         return;
       }
 

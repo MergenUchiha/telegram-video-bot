@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Bot, InlineKeyboard } from 'grammy';
 import { SessionsService } from '../../sessions/sessions.service';
 import { BotContextHelper } from '../bot-context.helper';
-import { WaitStateService } from '../wait-state.service';
+import { WaitStateService } from '../../redis/wait-state/wait-state.service';
 import { KOKORO_UNSUPPORTED_LANGUAGES } from '../../tts/tts.service';
 
 @Injectable()
@@ -25,7 +25,7 @@ export class TextInputHandler {
       const session = await this.sessions.getActiveSession(user.id);
       if (!session) return;
 
-      const w = this.waitState.get(session.id);
+      const w = await this.waitState.get(session.id);
       if (!w) return;
 
       await this.helper.tryDeleteMessage(ctx, ctx.message.message_id);
@@ -46,7 +46,7 @@ export class TextInputHandler {
       if (w.promptMsgId) {
         await this.helper.tryDeleteMessage(ctx, w.promptMsgId);
       }
-      this.waitState.delete(session.id);
+      await this.waitState.delete(session.id);
 
       const fresh = await this.sessions.getSessionById(session.id);
       if (fresh) {

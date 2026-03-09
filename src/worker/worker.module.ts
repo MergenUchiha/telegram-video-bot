@@ -17,16 +17,21 @@ import { MetricsModule } from '../modules/metrics/metrics.module';
 import { JokesModule } from '../modules/jokes/jokes.module';
 import { LibraryModule } from '../modules/library/library.module';
 import { TextCardModule } from '../modules/text-card/text-card.module';
+import { EncryptionModule } from '../modules/encryption/encryption.module';
 
 import { RenderProcessor } from './render.processor';
 import { CleanupService } from './cleanup.service';
 import { FfmpegService } from './services/ffmpeg.service';
 import { StandardRenderService } from './services/standard-render.service';
 import { JokesRenderService } from './services/jokes-render.service';
+import { validateEnv } from 'src/common/config/env.validation';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      validate: validateEnv,
+    }),
     BullModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => buildBullMQOptions(config),
@@ -44,12 +49,11 @@ import { JokesRenderService } from './services/jokes-render.service';
     JokesModule,
     LibraryModule,
     TextCardModule,
+    EncryptionModule,
   ],
   providers: [
-    // Worker core
     RenderProcessor,
     CleanupService,
-    // Render services
     FfmpegService,
     StandardRenderService,
     JokesRenderService,

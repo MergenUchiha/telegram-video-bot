@@ -1,5 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Bot, InlineKeyboard } from 'grammy';
+import type IORedis from 'ioredis';
+import { ConfigService } from '@nestjs/config';
+import { REDIS_CONNECTION } from '../redis/redis.constants';
 import { LibraryAdminService } from '../library/library-admin.service';
 import { BackgroundLibraryService } from '../library/background-library.service';
 import { MusicLibraryService } from '../library/music-library.service';
@@ -7,17 +10,45 @@ import { TelegramFilesService } from '../telegram-files/telegram-files.service';
 
 type UploadMode = 'video' | 'music';
 
+const AWAITING_TTL_SEC = 600; // 10 минут
+
+/**
+ * Хранит состояние ожидания файла от админа в Redis.
+ * Заменяет in-memory Map — переживает рестарт процесса.
+ */
 @Injectable()
 export class LibraryBotHandler {
   private readonly logger = new Logger(LibraryBotHandler.name);
-  private readonly awaiting = new Map<string, UploadMode>();
 
   constructor(
+    @Inject(REDIS_CONNECTION) private readonly redis: IORedis,
     private readonly admin: LibraryAdminService,
     private readonly bgLibrary: BackgroundLibraryService,
     private readonly musicLibrary: MusicLibraryService,
     private readonly tgFiles: TelegramFilesService,
   ) {}
+
+  private awaitingKey(userId: string): string {
+    return `library:awaiting:${userId}`;
+  }
+
+  private async getAwaiting(userId: string): Promise<UploadMode | null> {
+    const val = await this.redis.get(this.awaitingKey(userId));
+    return (val as UploadMode | null) ?? null;
+  }
+
+  private async setAwaiting(userId: string, mode: UploadMode): Promise<void> {
+    await this.redis.set(
+      this.awaitingKey(userId),
+      mode,
+      'EX',
+      AWAITING_TTL_SEC,
+    );
+  }
+
+  private async clearAwaiting(userId: string): Promise<void> {
+    await this.redis.del(this.awaitingKey(userId));
+  }
 
   register(bot: Bot) {
     bot.command('library', async (ctx) => {
@@ -25,7 +56,7 @@ export class LibraryBotHandler {
       if (!this.admin.isAdmin(userId))
         return ctx.reply('🔒 Команда доступна только администратору.');
 
-      this.awaiting.delete(userId);
+      await this.clearAwaiting(userId);
 
       const arg = (ctx.message?.text ?? '')
         .split(' ')
@@ -72,7 +103,7 @@ export class LibraryBotHandler {
       await ctx.answerCallbackQuery();
       const userId = String(ctx.from?.id);
       if (!this.admin.isAdmin(userId)) return;
-      this.awaiting.set(userId, 'video');
+      await this.setAwaiting(userId, 'video');
       await ctx.reply(
         '🎬 Отправь фоновое видео.\n\n' +
           '💡 Лучше через 📎 → Файл — тогда Telegram не сожмёт качество.\n\n' +
@@ -84,7 +115,7 @@ export class LibraryBotHandler {
       await ctx.answerCallbackQuery();
       const userId = String(ctx.from?.id);
       if (!this.admin.isAdmin(userId)) return;
-      this.awaiting.set(userId, 'music');
+      await this.setAwaiting(userId, 'music');
       await ctx.reply(
         '🎵 Отправь аудиофайл для библиотеки.\n\n' +
           'Форматы: mp3, ogg, wav, aac, m4a, flac\n' +
@@ -159,14 +190,10 @@ export class LibraryBotHandler {
       await ctx.reply(LibraryAdminService.helpText());
     });
 
-    // ВАЖНО: все три обработчика принимают `next` и пробрасывают его,
-    // если сообщение не предназначено для библиотечного загрузчика.
-    // Без этого Grammy останавливает цепочку и основной обработчик бота не получает видео.
-
     bot.on('message:document', async (ctx, next) => {
       const userId = String(ctx.from?.id);
       if (!this.admin.isAdmin(userId)) return next();
-      const mode = this.awaiting.get(userId);
+      const mode = await this.getAwaiting(userId);
       if (!mode) return next();
 
       const doc = ctx.message.document;
@@ -188,17 +215,17 @@ export class LibraryBotHandler {
         );
       }
 
-      this.awaiting.delete(userId);
+      await this.clearAwaiting(userId);
       await this.handleUpload(ctx, mode, doc.file_id, filename, doc.file_size);
     });
 
     bot.on('message:audio', async (ctx, next) => {
       const userId = String(ctx.from?.id);
       if (!this.admin.isAdmin(userId)) return next();
-      const mode = this.awaiting.get(userId);
+      const mode = await this.getAwaiting(userId);
       if (mode !== 'music') return next();
 
-      this.awaiting.delete(userId);
+      await this.clearAwaiting(userId);
       const audio = ctx.message.audio;
       const filename = audio.file_name ?? `audio_${Date.now()}.mp3`;
       await this.handleUpload(
@@ -213,10 +240,10 @@ export class LibraryBotHandler {
     bot.on('message:video', async (ctx, next) => {
       const userId = String(ctx.from?.id);
       if (!this.admin.isAdmin(userId)) return next();
-      const mode = this.awaiting.get(userId);
+      const mode = await this.getAwaiting(userId);
       if (mode !== 'video') return next();
 
-      this.awaiting.delete(userId);
+      await this.clearAwaiting(userId);
       await ctx.reply(
         '⚠️ Telegram сжал видео. Для оригинального качества: 📎 → Файл.\n⬇️ Загружаю...',
       );

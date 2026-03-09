@@ -3,7 +3,6 @@ import { BotService } from './bot.service';
 import { BotUpdate } from './bot.update';
 import { LibraryBotHandler } from './library-bot.handler';
 import { BotContextHelper } from './bot-context.helper';
-import { WaitStateService } from './wait-state.service';
 import { StandardSettingsHandler } from './handlers/standard-settings.handler';
 import { AutoJokesHandler } from './handlers/auto-jokes.handler';
 import { TextInputHandler } from './handlers/text-input.handler';
@@ -35,7 +34,6 @@ import { JokesModule } from '../jokes/jokes.module';
     RateLimitService,
     // Shared helpers
     BotContextHelper,
-    WaitStateService,
     // Feature handlers
     StandardSettingsHandler,
     AutoJokesHandler,

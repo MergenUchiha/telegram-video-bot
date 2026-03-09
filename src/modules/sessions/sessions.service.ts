@@ -56,31 +56,34 @@ export class SessionsService {
     });
   }
 
-  // ── Сессии — создание ─────────────────────────────────────────────────────
+  // ── Сессии — создание (с транзакцией против race condition) ───────────────
 
   async createNewSession(userId: string): Promise<RenderSession> {
-    await this.deactivateUserSessions(userId);
-    return this.prisma.renderSession.create({
-      data: { userId, isActive: true, state: RenderSessionState.WAIT_VIDEO },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.renderSession.updateMany({
+        where: { userId, isActive: true },
+        data: { isActive: false },
+      });
+      return tx.renderSession.create({
+        data: { userId, isActive: true, state: RenderSessionState.WAIT_VIDEO },
+      });
     });
   }
 
   async createSpanishJokesSession(userId: string): Promise<RenderSession> {
-    await this.deactivateUserSessions(userId);
-    return this.prisma.renderSession.create({
-      data: {
-        userId,
-        isActive: true,
-        state: RenderSessionState.READY_TO_RENDER,
-        contentMode: ContentMode.SPANISH_JOKES_AUTO,
-      },
-    });
-  }
-
-  private async deactivateUserSessions(userId: string): Promise<void> {
-    await this.prisma.renderSession.updateMany({
-      where: { userId, isActive: true },
-      data: { isActive: false },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.renderSession.updateMany({
+        where: { userId, isActive: true },
+        data: { isActive: false },
+      });
+      return tx.renderSession.create({
+        data: {
+          userId,
+          isActive: true,
+          state: RenderSessionState.READY_TO_RENDER,
+          contentMode: ContentMode.SPANISH_JOKES_AUTO,
+        },
+      });
     });
   }
 
@@ -97,7 +100,7 @@ export class SessionsService {
     return this.prisma.renderSession.findUnique({ where: { id: sessionId } });
   }
 
-  // ── Сессии — обновление (единая точка входа) ──────────────────────────────
+  // ── Сессии — обновление ───────────────────────────────────────────────────
 
   private async update(
     sessionId: string,
