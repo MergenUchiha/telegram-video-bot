@@ -1,10 +1,52 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { ContentMode, RenderSessionState } from '@prisma/client';
+import {
+  ContentMode,
+  OriginalAudioPolicy,
+  RenderSession,
+  RenderSessionState,
+  SubtitlesMode,
+} from '@prisma/client';
+
+type SessionUpdateData = Partial<{
+  state: RenderSessionState;
+  isActive: boolean;
+  contentMode: ContentMode;
+  sourceVideoKey: string | null;
+  outputVideoKey: string | null;
+  ttsEnabled: boolean;
+  ttsText: string | null;
+  language: string | null;
+  voiceId: string | null;
+  ttsSpeed: number | null;
+  subtitlesMode: SubtitlesMode;
+  overlayEnabled: boolean;
+  overlayComment: string | null;
+  originalAudioPolicy: OriginalAudioPolicy;
+  advancedKeepWithTts: boolean;
+  customDuckDb: number | null;
+  jokeText: string;
+  jokeSourceUrl: string | null;
+  jokeLanguage: string | null;
+  backgroundVideoKey: string | null;
+  backgroundMusicKey: string | null;
+  textCardPreset: string;
+  autoPublishYoutube: boolean;
+  fixedBackgroundVideoKey: string | null;
+  fixedBackgroundMusicKey: string | null;
+  outputWidth: number;
+  outputHeight: number;
+  progress: number;
+  lastError: string;
+  lastBotMessageId: number | null;
+  telegramMeta: object;
+}>;
 
 @Injectable()
 export class SessionsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  // ── Пользователи ──────────────────────────────────────────────────────────
 
   async getOrCreateUser(telegramUserId: string, telegramChatId: string) {
     return this.prisma.user.upsert({
@@ -14,28 +56,17 @@ export class SessionsService {
     });
   }
 
-  async getActiveSession(userId: string) {
-    return this.prisma.renderSession.findFirst({
-      where: { userId, isActive: true },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
+  // ── Сессии — создание ─────────────────────────────────────────────────────
 
-  async createNewSession(userId: string) {
-    await this.prisma.renderSession.updateMany({
-      where: { userId, isActive: true },
-      data: { isActive: false },
-    });
+  async createNewSession(userId: string): Promise<RenderSession> {
+    await this.deactivateUserSessions(userId);
     return this.prisma.renderSession.create({
       data: { userId, isActive: true, state: RenderSessionState.WAIT_VIDEO },
     });
   }
 
-  async createSpanishJokesSession(userId: string) {
-    await this.prisma.renderSession.updateMany({
-      where: { userId, isActive: true },
-      data: { isActive: false },
-    });
+  async createSpanishJokesSession(userId: string): Promise<RenderSession> {
+    await this.deactivateUserSessions(userId);
     return this.prisma.renderSession.create({
       data: {
         userId,
@@ -46,98 +77,125 @@ export class SessionsService {
     });
   }
 
-  async setState(sessionId: string, state: RenderSessionState) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { state },
+  private async deactivateUserSessions(userId: string): Promise<void> {
+    await this.prisma.renderSession.updateMany({
+      where: { userId, isActive: true },
+      data: { isActive: false },
     });
   }
 
-  async setContentMode(sessionId: string, mode: ContentMode) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { contentMode: mode },
+  // ── Сессии — чтение ───────────────────────────────────────────────────────
+
+  async getActiveSession(userId: string): Promise<RenderSession | null> {
+    return this.prisma.renderSession.findFirst({
+      where: { userId, isActive: true },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
-  async setTelegramMeta(sessionId: string, meta: object) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { telegramMeta: meta },
-    });
-  }
-
-  async setSourceVideoKey(sessionId: string, key: string) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { sourceVideoKey: key },
-    });
-  }
-
-  async setOutputVideoKey(sessionId: string, key: string) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { outputVideoKey: key },
-    });
-  }
-
-  async setProgress(sessionId: string, progress: number) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { progress },
-    });
-  }
-
-  async setLastError(sessionId: string, lastError: string) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { lastError },
-    });
-  }
-
-  async getSessionById(sessionId: string) {
+  async getSessionById(sessionId: string): Promise<RenderSession | null> {
     return this.prisma.renderSession.findUnique({ where: { id: sessionId } });
   }
 
-  async setOverlayComment(sessionId: string, overlayComment: string | null) {
+  // ── Сессии — обновление (единая точка входа) ──────────────────────────────
+
+  private async update(
+    sessionId: string,
+    data: SessionUpdateData,
+  ): Promise<RenderSession> {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: {
-        overlayComment,
-        overlayEnabled: overlayComment !== null && overlayComment !== '',
-      },
+      data: data as any,
+    });
+  }
+
+  // ── Конкретные сеттеры ────────────────────────────────────────────────────
+
+  async setState(
+    sessionId: string,
+    state: RenderSessionState,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { state });
+  }
+
+  async setContentMode(
+    sessionId: string,
+    mode: ContentMode,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { contentMode: mode });
+  }
+
+  async setTelegramMeta(
+    sessionId: string,
+    meta: object,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { telegramMeta: meta });
+  }
+
+  async setSourceVideoKey(
+    sessionId: string,
+    key: string,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { sourceVideoKey: key });
+  }
+
+  async setOutputVideoKey(
+    sessionId: string,
+    key: string,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { outputVideoKey: key });
+  }
+
+  async setProgress(
+    sessionId: string,
+    progress: number,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { progress });
+  }
+
+  async setLastError(
+    sessionId: string,
+    lastError: string,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { lastError });
+  }
+
+  async setOverlayComment(
+    sessionId: string,
+    overlayComment: string | null,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, {
+      overlayComment,
+      overlayEnabled: overlayComment !== null && overlayComment !== '',
     });
   }
 
   async setOriginalAudioPolicy(
     sessionId: string,
-    policy: 'REPLACE' | 'DUCK' | 'MUTE' | 'KEEP',
-  ) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { originalAudioPolicy: policy },
-    });
+    policy: OriginalAudioPolicy,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { originalAudioPolicy: policy });
   }
 
-  async setTtsEnabled(sessionId: string, enabled: boolean) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { ttsEnabled: enabled },
-    });
+  async setTtsEnabled(
+    sessionId: string,
+    enabled: boolean,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { ttsEnabled: enabled });
   }
 
-  async setTtsText(sessionId: string, ttsText: string | null) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { ttsText },
-    });
+  async setTtsText(
+    sessionId: string,
+    ttsText: string | null,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { ttsText });
   }
 
-  async setSubtitlesMode(sessionId: string, mode: 'NONE' | 'HARD' | 'SOFT') {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { subtitlesMode: mode },
-    });
+  async setSubtitlesMode(
+    sessionId: string,
+    mode: SubtitlesMode | 'NONE' | 'HARD' | 'SOFT',
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { subtitlesMode: mode as SubtitlesMode });
   }
 
   async setTtsSettings(
@@ -147,84 +205,84 @@ export class SessionsService {
       voiceId?: string | null;
       ttsSpeed?: number | null;
     },
-  ) {
-    return this.prisma.renderSession.update({ where: { id: sessionId }, data });
+  ): Promise<RenderSession> {
+    return this.update(sessionId, data);
   }
 
-  async setAdvancedKeepWithTts(sessionId: string, enabled: boolean) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { advancedKeepWithTts: enabled },
-    });
+  async setAdvancedKeepWithTts(
+    sessionId: string,
+    enabled: boolean,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { advancedKeepWithTts: enabled });
   }
 
-  async setCustomDuckDb(sessionId: string, duckDb: number | null) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { customDuckDb: duckDb },
-    });
+  async setCustomDuckDb(
+    sessionId: string,
+    duckDb: number | null,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { customDuckDb: duckDb });
   }
 
-  async setLastBotMessageId(sessionId: string, messageId: number | null) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { lastBotMessageId: messageId },
-    });
+  async setLastBotMessageId(
+    sessionId: string,
+    messageId: number | null,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { lastBotMessageId: messageId });
   }
 
-  async setJokeText(sessionId: string, jokeText: string) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { jokeText },
-    });
+  async setJokeText(
+    sessionId: string,
+    jokeText: string,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { jokeText });
   }
 
-  async setJokeSourceUrl(sessionId: string, url: string | null) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { jokeSourceUrl: url },
-    });
+  async setJokeSourceUrl(
+    sessionId: string,
+    url: string | null,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { jokeSourceUrl: url });
   }
 
-  async setBackgroundVideoKey(sessionId: string, key: string | null) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { backgroundVideoKey: key },
-    });
+  async setBackgroundVideoKey(
+    sessionId: string,
+    key: string | null,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { backgroundVideoKey: key });
   }
 
-  async setBackgroundMusicKey(sessionId: string, key: string | null) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { backgroundMusicKey: key },
-    });
+  async setBackgroundMusicKey(
+    sessionId: string,
+    key: string | null,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { backgroundMusicKey: key });
   }
 
-  async setTextCardPreset(sessionId: string, preset: string) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { textCardPreset: preset },
-    });
+  async setTextCardPreset(
+    sessionId: string,
+    preset: string,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { textCardPreset: preset });
   }
 
-  async setAutoPublishYoutube(sessionId: string, enabled: boolean) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { autoPublishYoutube: enabled },
-    });
+  async setAutoPublishYoutube(
+    sessionId: string,
+    enabled: boolean,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { autoPublishYoutube: enabled });
   }
 
-  async setFixedBackgroundVideoKey(sessionId: string, key: string | null) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { fixedBackgroundVideoKey: key },
-    });
+  async setFixedBackgroundVideoKey(
+    sessionId: string,
+    key: string | null,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { fixedBackgroundVideoKey: key });
   }
 
-  async setFixedBackgroundMusicKey(sessionId: string, key: string | null) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data: { fixedBackgroundMusicKey: key },
-    });
+  async setFixedBackgroundMusicKey(
+    sessionId: string,
+    key: string | null,
+  ): Promise<RenderSession> {
+    return this.update(sessionId, { fixedBackgroundMusicKey: key });
   }
 }

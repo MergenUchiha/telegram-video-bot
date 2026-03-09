@@ -2,18 +2,15 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
 import { Queue, JobsOptions } from 'bullmq';
 import { QUEUE_RENDER } from '../redis/redis.constants';
+import type { RenderJobPayload } from '../../common/types/render-job.types';
 
-export interface RenderJobPayload {
-  sessionId: string;
-  userId: string;
-  chatId: string;
-}
+export type { RenderJobPayload };
 
 @Injectable()
 export class QueuesService {
   constructor(@InjectQueue(QUEUE_RENDER) private readonly renderQueue: Queue) {}
 
-  private defaultRenderJobOptions(): JobsOptions {
+  private defaultJobOptions(): JobsOptions {
     return {
       removeOnComplete: { age: 60 * 60, count: 5000 },
       removeOnFail: { age: 24 * 60 * 60, count: 5000 },
@@ -36,7 +33,7 @@ export class QueuesService {
     }
 
     return this.renderQueue.add('render', payload, {
-      ...this.defaultRenderJobOptions(),
+      ...this.defaultJobOptions(),
       jobId,
     });
   }

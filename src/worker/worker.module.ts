@@ -20,6 +20,9 @@ import { TextCardModule } from '../modules/text-card/text-card.module';
 
 import { RenderProcessor } from './render.processor';
 import { CleanupService } from './cleanup.service';
+import { FfmpegService } from './services/ffmpeg.service';
+import { StandardRenderService } from './services/standard-render.service';
+import { JokesRenderService } from './services/jokes-render.service';
 
 @Module({
   imports: [
@@ -42,6 +45,14 @@ import { CleanupService } from './cleanup.service';
     LibraryModule,
     TextCardModule,
   ],
-  providers: [RenderProcessor, CleanupService],
+  providers: [
+    // Worker core
+    RenderProcessor,
+    CleanupService,
+    // Render services
+    FfmpegService,
+    StandardRenderService,
+    JokesRenderService,
+  ],
 })
 export class WorkerModule {}

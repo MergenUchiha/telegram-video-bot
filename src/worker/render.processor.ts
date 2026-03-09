@@ -1,13 +1,11 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { ContentMode, RenderSessionState } from '@prisma/client';
-import { execa } from 'execa';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
 import * as os from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 import { QUEUE_RENDER } from '../modules/redis/redis.constants';
 import { SessionsService } from '../modules/sessions/sessions.service';
@@ -15,20 +13,17 @@ import { StorageService } from '../modules/storage/storage.service';
 import { ProgressService } from '../modules/redis/progress.service';
 import { LockService } from '../modules/redis/lock.service';
 import { TelegramSenderService } from '../modules/telegram-sender/telegram-sender.service';
-import { TtsService } from '../modules/tts/tts.service';
-import { MediaProbeService } from '../modules/media-probe/media-probe.service';
-import { SubtitlesService } from '../modules/subtitles/subtitles.service';
 import { MetricsService } from '../modules/metrics/metrics.service';
 import { UsedJokesService } from '../modules/jokes/used-jokes.service';
-import { JokesCacheService } from '../modules/jokes/jokes-cache.service';
-import { BackgroundLibraryService } from '../modules/library/background-library.service';
-import { MusicLibraryService } from '../modules/library/music-library.service';
-import {
-  TextCardService,
-  TextCardPreset,
-} from '../modules/text-card/text-card.service';
+import { FfmpegService } from './services/ffmpeg.service';
+import { StandardRenderService } from './services/standard-render.service';
+import { JokesRenderService } from './services/jokes-render.service';
 
-type RenderJobPayload = { sessionId: string; userId: string; chatId: string };
+export interface RenderJobPayload {
+  sessionId: string;
+  userId: string;
+  chatId: string;
+}
 
 @Processor(QUEUE_RENDER, { concurrency: 1 })
 export class RenderProcessor extends WorkerHost {
@@ -39,17 +34,12 @@ export class RenderProcessor extends WorkerHost {
     private readonly storage: StorageService,
     private readonly progress: ProgressService,
     private readonly lock: LockService,
-    private readonly config: ConfigService,
     private readonly tg: TelegramSenderService,
-    private readonly tts: TtsService,
-    private readonly probe: MediaProbeService,
-    private readonly subs: SubtitlesService,
     private readonly metrics: MetricsService,
     private readonly usedJokes: UsedJokesService,
-    private readonly jokesCache: JokesCacheService,
-    private readonly bgLibrary: BackgroundLibraryService,
-    private readonly musicLibrary: MusicLibraryService,
-    private readonly textCard: TextCardService,
+    private readonly ffmpeg: FfmpegService,
+    private readonly standardRender: StandardRenderService,
+    private readonly jokesRender: JokesRenderService,
   ) {
     super();
     this.logger.log('RenderProcessor initialized');
@@ -59,20 +49,10 @@ export class RenderProcessor extends WorkerHost {
     const { sessionId, userId, chatId } = job.data;
     const startedAt = new Date();
 
-    const tmpRoot =
-      this.config.get<string>('RENDER_TMP_DIR') ||
-      path.join(os.tmpdir(), 'renderer');
-    const ffmpegPath = this.config.get<string>('FFMPEG_PATH') || 'ffmpeg';
-    const outW = Number(this.config.get<string>('OUTPUT_WIDTH', '1080'));
-    const outH = Number(this.config.get<string>('OUTPUT_HEIGHT', '1920'));
-    const renderTimeoutMs = Number(
-      this.config.get<string>('RENDER_TIMEOUT_MS') || '1200000',
+    const tmpDir = path.join(
+      process.env['RENDER_TMP_DIR'] ?? path.join(os.tmpdir(), 'renderer'),
+      sessionId,
     );
-    const configDuckDb = Number(
-      this.config.get<string>('DEFAULT_DUCK_DB') || '-18',
-    );
-
-    const tmpDir = path.join(tmpRoot, sessionId);
     fs.mkdirSync(tmpDir, { recursive: true });
 
     const lockResult = await this.lock.acquireUserRenderLock(userId, sessionId);
@@ -82,617 +62,75 @@ export class RenderProcessor extends WorkerHost {
       );
       return;
     }
-    const lockKey = lockResult.key;
 
     const lockRefreshInterval = setInterval(async () => {
-      const ok = await this.lock.refreshLock(lockKey, sessionId);
+      const ok = await this.lock.refreshLock(lockResult.key, sessionId);
       if (!ok)
         this.logger.warn(`Lock lost mid-render for session ${sessionId}`);
     }, 60_000);
 
     try {
-      await this.progress.setStatus(sessionId, {
-        state: 'RENDERING',
-        updatedAt: new Date().toISOString(),
-        message: 'Воркер принял задачу',
-      });
-      await this.progress.setProgress(sessionId, 5);
+      await this.setStatus(sessionId, 5, 'Воркер принял задачу');
 
       const session = await this.sessions.getSessionById(sessionId);
       if (!session) throw new Error(`Session not found: ${sessionId}`);
 
-      if ((session as any).contentMode === ContentMode.SPANISH_JOKES_AUTO) {
-        await this.processSpanishJokesAuto(
+      let outputPath: string;
+
+      if (session.contentMode === ContentMode.SPANISH_JOKES_AUTO) {
+        const result = await this.jokesRender.render({
           session,
           userId,
-          chatId,
           tmpDir,
-          ffmpegPath,
-          outW,
-          outH,
-          renderTimeoutMs,
-          startedAt,
-        );
+        });
+        outputPath = result.outputPath;
+
+        // Помечаем анекдот использованным только после успешного рендера
+        await this.usedJokes
+          .markUsed(userId, result.jokeText)
+          .catch((e: Error) =>
+            this.logger.warn(`[${sessionId}] markUsed failed: ${e.message}`),
+          );
+
+        if (session.autoPublishYoutube) {
+          await this.notifyYoutubeAutoPublish(chatId);
+        }
       } else {
-        await this.processStandard(
-          session,
-          userId,
-          chatId,
-          tmpDir,
-          ffmpegPath,
-          outW,
-          outH,
-          renderTimeoutMs,
-          configDuckDb,
-          startedAt,
-        );
+        outputPath = await this.standardRender.render({ session, tmpDir });
       }
-    } catch (e: any) {
-      const msg = this.clip(e?.message || String(e), 1600);
-      const finishedAt = new Date();
 
-      await this.progress.setLastError(sessionId, msg);
-      await this.progress.setStatus(sessionId, {
-        state: 'RENDER_FAILED',
-        updatedAt: new Date().toISOString(),
-        message: msg,
-      });
-      try {
-        await this.sessions.setState(
-          sessionId,
-          RenderSessionState.RENDER_FAILED,
-        );
-      } catch {}
-
-      await this.metrics
-        .recordJobFailed({
-          sessionId,
-          durationMs: new Date().getTime() - startedAt.getTime(),
-          startedAt: startedAt.toISOString(),
-          finishedAt: finishedAt.toISOString(),
-          error: msg.slice(0, 500),
-        })
-        .catch(() => {});
-
-      await this.tg
-        .sendMessage(
-          chatId,
-          `❌ Рендер завершился с ошибкой:\n${msg.slice(0, 1000)}`,
-        )
-        .catch(() => {});
-
+      await this.finalizeAndSend(sessionId, chatId, outputPath, startedAt);
+    } catch (e: unknown) {
+      await this.handleFailure(e, sessionId, chatId, startedAt);
       throw e;
     } finally {
       clearInterval(lockRefreshInterval);
-      await this.lock.releaseLock(lockKey, sessionId).catch(() => {});
-      try {
-        await fs.promises.rm(tmpDir, { recursive: true, force: true });
-      } catch {}
+      await this.lock.releaseLock(lockResult.key, sessionId).catch(() => {});
+      fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     }
-  }
-
-  private async processStandard(
-    session: any,
-    userId: string,
-    chatId: string,
-    tmpDir: string,
-    ffmpegPath: string,
-    outW: number,
-    outH: number,
-    renderTimeoutMs: number,
-    configDuckDb: number,
-    startedAt: Date,
-  ): Promise<void> {
-    const sessionId = session.id;
-    if (!session.sourceVideoKey) throw new Error('sourceVideoKey missing');
-
-    const inPath = path.join(tmpDir, 'input.mp4');
-    const outPath = path.join(tmpDir, 'out.mp4');
-    const ttsWav = path.join(tmpDir, 'tts.wav');
-    const ttsNormWav = path.join(tmpDir, 'tts_norm.wav');
-    const srtPath = path.join(tmpDir, 'subs.srt');
-    const assPath = path.join(tmpDir, 'subs.ass');
-    const overlayTextFile = path.join(tmpDir, 'overlay.txt');
-
-    const duckDb =
-      typeof session.customDuckDb === 'number'
-        ? session.customDuckDb
-        : configDuckDb;
-
-    await this.storage.downloadToFile(session.sourceVideoKey, inPath);
-    await this.progress.setProgress(sessionId, 15);
-
-    const meta = await this.probe.probe(inPath);
-    const fps = meta.fps || 30;
-    const hasAudio = meta.hasAudio;
-
-    await this.progress.setProgress(sessionId, 20);
-
-    const base = `scale=${outW}:${outH}:force_original_aspect_ratio=increase,crop=${outW}:${outH}`;
-    let vf = base;
-
-    const overlayEnabled = Boolean(session.overlayEnabled);
-    const overlayComment = session.overlayComment as string | null;
-
-    if (overlayEnabled && overlayComment) {
-      const fontPath = this.config.get<string>(
-        'FONT_PATH',
-        'C:\\Windows\\Fonts\\arial.ttf',
-      );
-      const wrapped = this.wrapText(overlayComment.toUpperCase(), 22);
-      await fs.promises.writeFile(overlayTextFile, wrapped, 'utf-8');
-      const fontEsc = fontPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
-      const textFileEsc = overlayTextFile
-        .replace(/\\/g, '\\\\')
-        .replace(/:/g, '\\:');
-      vf =
-        `${vf},drawtext=fontfile='${fontEsc}':` +
-        `textfile='${textFileEsc}':` +
-        `fontcolor=black:fontsize=72:line_spacing=14:` +
-        `box=1:boxcolor=white@0.85:boxborderw=36:` +
-        `shadowcolor=black@0.25:shadowx=2:shadowy=2:` +
-        `x=(w-text_w)/2:y=h-text_h-160`;
-    }
-
-    const ttsEnabled = Boolean(session.ttsEnabled);
-    const ttsText = (session.ttsText as string | null)?.trim() || '';
-    const subtitlesMode =
-      (session.subtitlesMode as 'NONE' | 'HARD' | 'SOFT') ?? 'NONE';
-
-    if (ttsEnabled) {
-      if (!ttsText) throw new Error('TTS включён, но ttsText пуст');
-
-      await this.progress.setStatus(sessionId, {
-        state: 'RENDERING',
-        updatedAt: new Date().toISOString(),
-        message: 'Генерирую TTS...',
-      });
-
-      await this.tts.synthesizeToWav(ttsWav, {
-        text: ttsText,
-        language: session.language ?? null,
-        voiceId: session.voiceId ?? null,
-        speed: session.ttsSpeed ?? null,
-      });
-
-      await this.progress.setProgress(sessionId, 35);
-      await this.runFfmpeg(
-        ffmpegPath,
-        [
-          '-y',
-          '-i',
-          ttsWav,
-          '-af',
-          'loudnorm=I=-16:LRA=11:TP=-1.5',
-          ttsNormWav,
-        ],
-        renderTimeoutMs,
-      );
-      await this.progress.setProgress(sessionId, 45);
-
-      if (subtitlesMode === 'HARD') {
-        await this.progress.setStatus(sessionId, {
-          state: 'RENDERING',
-          updatedAt: new Date().toISOString(),
-          message: 'Генерирую субтитры...',
-        });
-        await this.subs.makeSrt(srtPath, ttsText, meta.durationSec || 10);
-        await this.subs.srtToAss(assPath, srtPath);
-        const assEsc = assPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
-        vf = `${vf},ass='${assEsc}'`;
-        await this.progress.setProgress(sessionId, 55);
-      }
-    }
-
-    const policy =
-      (session.originalAudioPolicy as 'REPLACE' | 'DUCK' | 'MUTE' | 'KEEP') ??
-      'KEEP';
-    const advancedKeepWithTts = Boolean(session.advancedKeepWithTts);
-
-    const inputs: string[] = ['-y', '-i', inPath];
-    if (ttsEnabled) inputs.push('-i', ttsNormWav);
-
-    const videoArgs = [
-      '-vf',
-      vf,
-      '-c:v',
-      'libx264',
-      '-preset',
-      'veryfast',
-      '-crf',
-      '20',
-      '-r',
-      String(Math.round(fps * 1000) / 1000),
-    ];
-    const outArgs: string[] = [];
-
-    if (!ttsEnabled) {
-      outArgs.push(
-        ...(!hasAudio || policy === 'MUTE' ? ['-an'] : ['-c:a', 'copy']),
-        outPath,
-      );
-    } else {
-      const eff = hasAudio
-        ? policy
-        : policy === 'KEEP' || policy === 'DUCK'
-          ? 'REPLACE'
-          : policy;
-
-      if (eff === 'REPLACE' || eff === 'MUTE') {
-        outArgs.push(
-          '-map',
-          '0:v:0',
-          '-map',
-          '1:a:0',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '192k',
-          outPath,
-        );
-      } else if (eff === 'DUCK') {
-        outArgs.push(
-          '-filter_complex',
-          `[0:a]volume=${duckDb}dB[a0];[a0][1:a]amix=inputs=2:duration=first:dropout_transition=0[a]`,
-          '-map',
-          '0:v:0',
-          '-map',
-          '[a]',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '192k',
-          outPath,
-        );
-      } else {
-        // KEEP
-        if (!advancedKeepWithTts) {
-          outArgs.push(
-            '-map',
-            '0:v:0',
-            '-map',
-            '0:a:0',
-            '-c:a',
-            'aac',
-            '-b:a',
-            '192k',
-            outPath,
-          );
-        } else {
-          outArgs.push(
-            '-filter_complex',
-            `[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0[a]`,
-            '-map',
-            '0:v:0',
-            '-map',
-            '[a]',
-            '-c:a',
-            'aac',
-            '-b:a',
-            '192k',
-            outPath,
-          );
-        }
-      }
-    }
-
-    await this.progress.setProgress(sessionId, 70);
-    await this.progress.setStatus(sessionId, {
-      state: 'RENDERING',
-      updatedAt: new Date().toISOString(),
-      message: 'FFmpeg обрабатывает...',
-    });
-
-    await this.runFfmpeg(
-      ffmpegPath,
-      [...inputs, ...videoArgs, ...outArgs],
-      renderTimeoutMs,
-    );
-    await this.progress.setProgress(sessionId, 80);
-
-    await this.finalizeAndSend(session.id, chatId, outPath, startedAt);
-  }
-
-  private async processSpanishJokesAuto(
-    session: any,
-    userId: string,
-    chatId: string,
-    tmpDir: string,
-    ffmpegPath: string,
-    outW: number,
-    outH: number,
-    renderTimeoutMs: number,
-    startedAt: Date,
-  ): Promise<void> {
-    const sessionId = session.id;
-
-    await this.progress.setStatus(sessionId, {
-      state: 'RENDERING',
-      updatedAt: new Date().toISOString(),
-      message: 'Получаю анекдот...',
-    });
-    await this.progress.setProgress(sessionId, 10);
-
-    let jokes = await this.jokesCache.getPool();
-    if (!jokes.length) throw new Error('Нет доступных анекдотов');
-
-    let pickResult = await this.usedJokes.pick(userId, jokes);
-    if (!pickResult) throw new Error('Не удалось выбрать анекдот');
-
-    if (pickResult.poolExhausted) {
-      this.logger.log(
-        `[${sessionId}] Pool exhausted — fetching fresh jokes from web...`,
-      );
-      await this.progress.setStatus(sessionId, {
-        state: 'RENDERING',
-        updatedAt: new Date().toISOString(),
-        message: 'Пул анекдотов исчерпан, загружаю новые...',
-      });
-      jokes = await this.jokesCache.refreshCache();
-      await this.usedJokes.reset(userId);
-      pickResult = await this.usedJokes.pick(userId, jokes);
-      if (!pickResult)
-        throw new Error('Не удалось выбрать анекдот после обновления пула');
-      this.logger.log(
-        `[${sessionId}] Fresh pool loaded: ${jokes.length} jokes`,
-      );
-    }
-
-    const jokeText = pickResult.joke;
-    await this.sessions.setJokeText(sessionId, jokeText);
-    this.logger.log(
-      `[${sessionId}] Joke selected: ${jokeText.slice(0, 60)}...`,
-    );
-
-    await this.progress.setStatus(sessionId, {
-      state: 'RENDERING',
-      updatedAt: new Date().toISOString(),
-      message: 'Выбираю фоновое видео...',
-    });
-    await this.progress.setProgress(sessionId, 20);
-
-    let bgVideoKey: string | null =
-      (session as any).fixedBackgroundVideoKey ??
-      session.sourceVideoKey ??
-      null;
-    if (!bgVideoKey) bgVideoKey = await this.bgLibrary.pickRandom();
-    if (!bgVideoKey) {
-      throw new Error(
-        'Библиотека фоновых видео пуста. Загрузи видео через /library.',
-      );
-    }
-    await this.sessions.setBackgroundVideoKey(sessionId, bgVideoKey);
-
-    await this.progress.setStatus(sessionId, {
-      state: 'RENDERING',
-      updatedAt: new Date().toISOString(),
-      message: 'Выбираю музыку...',
-    });
-    await this.progress.setProgress(sessionId, 30);
-
-    const fixedMusicKey = (session as any).fixedBackgroundMusicKey as
-      | string
-      | null;
-    const musicKey = fixedMusicKey ?? (await this.musicLibrary.pickRandom());
-    if (musicKey) {
-      await this.sessions.setBackgroundMusicKey(sessionId, musicKey);
-    } else {
-      this.logger.warn(
-        `[${sessionId}] Music library empty, rendering without music`,
-      );
-    }
-
-    const bgPath = path.join(tmpDir, 'bg.mp4');
-    const musicPath = path.join(tmpDir, 'music.mp3');
-    const cardAssPath = path.join(tmpDir, 'joke_card.ass');
-    const outPath = path.join(tmpDir, 'out.mp4');
-
-    await this.storage.downloadToFile(bgVideoKey, bgPath);
-    await this.progress.setProgress(sessionId, 40);
-
-    let hasMusicFile = false;
-    if (musicKey) {
-      await this.storage.downloadToFile(musicKey, musicPath);
-      hasMusicFile = true;
-    }
-
-    const meta = await this.probe.probe(bgPath);
-    const fps = meta.fps || 30;
-    const durationSec = meta.durationSec || 30;
-
-    await this.progress.setStatus(sessionId, {
-      state: 'RENDERING',
-      updatedAt: new Date().toISOString(),
-      message: 'Генерирую текстовую карточку...',
-    });
-    await this.progress.setProgress(sessionId, 50);
-
-    const preset =
-      ((session as any).textCardPreset as TextCardPreset) || 'default';
-    await this.textCard.makeJokeCard(
-      cardAssPath,
-      jokeText,
-      durationSec,
-      preset,
-    );
-
-    await this.progress.setStatus(sessionId, {
-      state: 'RENDERING',
-      updatedAt: new Date().toISOString(),
-      message: 'FFmpeg собирает ролик...',
-    });
-    await this.progress.setProgress(sessionId, 65);
-
-    const cardAssEsc = cardAssPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
-
-    if (hasMusicFile) {
-      await this.buildSpanishJokesWithMusic(
-        ffmpegPath,
-        bgPath,
-        musicPath,
-        cardAssEsc,
-        outPath,
-        outW,
-        outH,
-        fps,
-        durationSec,
-        renderTimeoutMs,
-      );
-    } else {
-      await this.buildSpanishJokesNoMusic(
-        ffmpegPath,
-        bgPath,
-        cardAssEsc,
-        outPath,
-        outW,
-        outH,
-        fps,
-        durationSec,
-        renderTimeoutMs,
-      );
-    }
-
-    await this.progress.setProgress(sessionId, 85);
-
-    await this.finalizeAndSend(sessionId, chatId, outPath, startedAt);
-
-    // Помечаем анекдот как использованный только после успешного рендера
-    await this.usedJokes
-      .markUsed(userId, jokeText)
-      .catch((e) =>
-        this.logger.warn(`[${sessionId}] markUsed failed: ${e?.message}`),
-      );
-
-    if ((session as any).autoPublishYoutube) {
-      await this.triggerYoutubeAutoPublish(session, userId, chatId);
-    }
-  }
-
-  private async buildSpanishJokesWithMusic(
-    ffmpegPath: string,
-    bgPath: string,
-    musicPath: string,
-    cardAssEsc: string,
-    outPath: string,
-    outW: number,
-    outH: number,
-    fps: number,
-    durationSec: number,
-    renderTimeoutMs: number,
-  ): Promise<void> {
-    const musicVolumeDb = this.config.get<string>('MUSIC_VOLUME_DB') || '-18';
-    const duration = String(Math.round(durationSec * 100) / 100);
-    const roundFps = String(Math.round(fps * 1000) / 1000);
-
-    const filterComplex = [
-      `[0:v]scale=${outW}:${outH}:force_original_aspect_ratio=increase,crop=${outW}:${outH},ass='${cardAssEsc}'[v]`,
-      `[1:a]volume=${musicVolumeDb}dB,atrim=0:${duration},asetpts=PTS-STARTPTS[a]`,
-    ].join(';');
-
-    await this.runFfmpeg(
-      ffmpegPath,
-      [
-        '-y',
-        '-stream_loop',
-        '-1',
-        '-i',
-        bgPath,
-        '-stream_loop',
-        '-1',
-        '-i',
-        musicPath,
-        '-filter_complex',
-        filterComplex,
-        '-map',
-        '[v]',
-        '-map',
-        '[a]',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-crf',
-        '20',
-        '-r',
-        roundFps,
-        '-c:a',
-        'aac',
-        '-b:a',
-        '192k',
-        '-t',
-        duration,
-        outPath,
-      ],
-      renderTimeoutMs,
-    );
-  }
-
-  private async buildSpanishJokesNoMusic(
-    ffmpegPath: string,
-    bgPath: string,
-    cardAssEsc: string,
-    outPath: string,
-    outW: number,
-    outH: number,
-    fps: number,
-    durationSec: number,
-    renderTimeoutMs: number,
-  ): Promise<void> {
-    const duration = String(Math.round(durationSec * 100) / 100);
-    const roundFps = String(Math.round(fps * 1000) / 1000);
-
-    await this.runFfmpeg(
-      ffmpegPath,
-      [
-        '-y',
-        '-stream_loop',
-        '-1',
-        '-i',
-        bgPath,
-        '-vf',
-        `scale=${outW}:${outH}:force_original_aspect_ratio=increase,crop=${outW}:${outH},ass='${cardAssEsc}'`,
-        '-an',
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-crf',
-        '20',
-        '-r',
-        roundFps,
-        '-t',
-        duration,
-        outPath,
-      ],
-      renderTimeoutMs,
-    );
   }
 
   private async finalizeAndSend(
     sessionId: string,
     chatId: string,
-    outPath: string,
+    outputPath: string,
     startedAt: Date,
   ): Promise<void> {
     const outKey = `outputs/${sessionId}/${randomUUID()}.mp4`;
-    await this.storage.uploadFile(outKey, outPath, 'video/mp4');
+    await this.storage.uploadFile(outKey, outputPath, 'video/mp4');
     await this.sessions.setOutputVideoKey(sessionId, outKey);
     await this.progress.setProgress(sessionId, 90);
 
-    const url = await this.storage.presignGetUrl(outKey);
+    // Сначала пытаемся отправить файл напрямую, при ошибке — по ссылке
     try {
-      await this.tg.sendVideoFile(chatId, outPath, '✅ Рендер завершён!');
+      await this.tg.sendVideoFile(chatId, outputPath, '✅ Рендер завершён!');
     } catch {
+      const url = await this.storage.presignGetUrl(outKey);
       await this.tg.sendVideoByUrl(chatId, url, '✅ Рендер завершён! (ссылка)');
     }
 
     await this.sessions.setState(sessionId, RenderSessionState.RENDER_DONE);
-    await this.progress.setStatus(sessionId, {
-      state: 'RENDER_DONE',
-      updatedAt: new Date().toISOString(),
-      message: 'Готово',
-    });
-    await this.progress.setProgress(sessionId, 100);
+    await this.setStatus(sessionId, 100, 'Готово', 'RENDER_DONE');
 
     const finishedAt = new Date();
     await this.metrics
@@ -705,72 +143,65 @@ export class RenderProcessor extends WorkerHost {
       .catch(() => {});
   }
 
-  private async triggerYoutubeAutoPublish(
-    session: any,
-    userId: string,
+  private async handleFailure(
+    e: unknown,
+    sessionId: string,
     chatId: string,
+    startedAt: Date,
   ): Promise<void> {
-    this.logger.log(
-      `[${session.id}] Auto-publish to YouTube requested for user ${userId}. (Stage 5)`,
+    const msg = this.ffmpeg.clip(
+      e instanceof Error ? e.message : String(e),
+      1600,
     );
+    const finishedAt = new Date();
+
+    await this.progress.setLastError(sessionId, msg);
+    await this.setStatus(sessionId, undefined, msg, 'RENDER_FAILED');
+
+    await this.sessions
+      .setState(sessionId, RenderSessionState.RENDER_FAILED)
+      .catch(() => {});
+
+    await this.metrics
+      .recordJobFailed({
+        sessionId,
+        durationMs: finishedAt.getTime() - startedAt.getTime(),
+        startedAt: startedAt.toISOString(),
+        finishedAt: finishedAt.toISOString(),
+        error: msg.slice(0, 500),
+      })
+      .catch(() => {});
+
+    await this.tg
+      .sendMessage(
+        chatId,
+        `❌ Рендер завершился с ошибкой:\n${msg.slice(0, 1000)}`,
+      )
+      .catch(() => {});
+  }
+
+  private async setStatus(
+    sessionId: string,
+    progress?: number,
+    message?: string,
+    state: string = 'RENDERING',
+  ): Promise<void> {
+    await this.progress.setStatus(sessionId, {
+      state: state as any,
+      updatedAt: new Date().toISOString(),
+      message,
+    });
+    if (progress !== undefined) {
+      await this.progress.setProgress(sessionId, progress);
+    }
+  }
+
+  private async notifyYoutubeAutoPublish(chatId: string): Promise<void> {
     await this.tg
       .sendMessage(
         chatId,
         '📺 Автопубликация на YouTube будет реализована в следующем обновлении.',
       )
       .catch(() => {});
-  }
-
-  private async runFfmpeg(
-    ffmpegPath: string,
-    args: string[],
-    timeoutMs: number,
-  ): Promise<void> {
-    try {
-      const res = await execa(ffmpegPath, args, {
-        all: true,
-        timeout: timeoutMs,
-        killSignal: 'SIGKILL',
-      });
-      if (res.all) this.logger.debug(res.all);
-    } catch (e: any) {
-      const all = e?.all ? String(e.all) : '';
-      const merged = all?.trim()
-        ? `${e?.message}\n\nffmpeg output:\n${this.clip(all, 2400)}`
-        : String(e?.message);
-      this.logger.error(this.clip(merged, 2400));
-      throw new Error(this.clip(merged, 2400));
-    }
-  }
-
-  private clip(s: string, max = 1800): string {
-    const str = String(s ?? '');
-    return str.length <= max ? str : `…(truncated)\n${str.slice(-max)}`;
-  }
-
-  private wrapText(text: string, maxLineLen = 22): string {
-    const words = text.trim().split(/\s+/);
-    const lines: string[] = [];
-    let line = '';
-    for (const w of words) {
-      const candidate = line ? `${line} ${w}` : w;
-      if (candidate.length <= maxLineLen) {
-        line = candidate;
-      } else {
-        if (line) lines.push(line);
-        if (w.length > maxLineLen) {
-          let rest = w;
-          while (rest.length > maxLineLen) {
-            lines.push(rest.slice(0, maxLineLen));
-            rest = rest.slice(maxLineLen);
-          }
-          line = rest;
-        } else {
-          line = w;
-        }
-      }
-    }
-    if (line) lines.push(line);
-    return lines.join('\n');
   }
 }
