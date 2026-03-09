@@ -10,8 +10,6 @@ type UploadMode = 'video' | 'music';
 @Injectable()
 export class LibraryBotHandler {
   private readonly logger = new Logger(LibraryBotHandler.name);
-
-  // userId → что ожидаем: видео или музыку
   private readonly awaiting = new Map<string, UploadMode>();
 
   constructor(
@@ -22,14 +20,11 @@ export class LibraryBotHandler {
   ) {}
 
   register(bot: Bot) {
-    // ── /library ──────────────────────────────────────────────────────────
     bot.command('library', async (ctx) => {
       const userId = String(ctx.from?.id);
-      if (!this.admin.isAdmin(userId)) {
+      if (!this.admin.isAdmin(userId))
         return ctx.reply('🔒 Команда доступна только администратору.');
-      }
 
-      // Отмена ожидания при повторном /library
       this.awaiting.delete(userId);
 
       const arg = (ctx.message?.text ?? '')
@@ -52,41 +47,24 @@ export class LibraryBotHandler {
         return ctx.reply(await this.admin.deleteTrack(n));
       }
 
-      if (arg === 'help') {
-        return ctx.reply(LibraryAdminService.helpText());
-      }
+      if (arg === 'help') return ctx.reply(LibraryAdminService.helpText());
 
-      // Главное меню
       const status = await this.admin.getStatus();
-      const kb = new InlineKeyboard()
-        .text('🎬 Загрузить видео', 'lib:upload_video')
-        .row()
-        .text('🎵 Загрузить музыку', 'lib:upload_music')
-        .row()
-        .text('🗑 Удалить видео', 'lib:del_video_prompt')
-        .text('🗑 Удалить трек', 'lib:del_music_prompt')
-        .row()
-        .text('🔄 Обновить', 'lib:refresh')
-        .text('❓ Помощь', 'lib:help');
-
-      await ctx.reply(status, { reply_markup: kb });
+      await ctx.reply(status, { reply_markup: this.mainKeyboard() });
     });
-
-    // ── Inline кнопки ─────────────────────────────────────────────────────
 
     bot.callbackQuery('lib:refresh', async (ctx) => {
       await ctx.answerCallbackQuery();
       const userId = String(ctx.from?.id);
       if (!this.admin.isAdmin(userId)) return;
       const status = await this.admin.getStatus();
-      const kb = this.mainKeyboard();
       const msgId = ctx.callbackQuery.message?.message_id;
       try {
         await ctx.api.editMessageText(String(ctx.chat?.id), msgId!, status, {
-          reply_markup: kb,
+          reply_markup: this.mainKeyboard(),
         });
       } catch {
-        await ctx.reply(status, { reply_markup: kb });
+        await ctx.reply(status, { reply_markup: this.mainKeyboard() });
       }
     });
 
@@ -156,7 +134,6 @@ export class LibraryBotHandler {
       } catch {}
     });
 
-    // Удаление видео по номеру из inline
     bot.callbackQuery(/^lib:dv:(\d+)$/, async (ctx) => {
       const n = parseInt(ctx.match[1], 10);
       const result = await this.admin.deleteVideo(n);
@@ -167,7 +144,6 @@ export class LibraryBotHandler {
       await ctx.reply(result);
     });
 
-    // Удаление трека по номеру из inline
     bot.callbackQuery(/^lib:dm:(\d+)$/, async (ctx) => {
       const n = parseInt(ctx.match[1], 10);
       const result = await this.admin.deleteTrack(n);
@@ -183,13 +159,15 @@ export class LibraryBotHandler {
       await ctx.reply(LibraryAdminService.helpText());
     });
 
-    // ── Приём файлов (document — без сжатия) ─────────────────────────────
+    // ВАЖНО: все три обработчика принимают `next` и пробрасывают его,
+    // если сообщение не предназначено для библиотечного загрузчика.
+    // Без этого Grammy останавливает цепочку и основной обработчик бота не получает видео.
 
-    bot.on('message:document', async (ctx) => {
+    bot.on('message:document', async (ctx, next) => {
       const userId = String(ctx.from?.id);
-      if (!this.admin.isAdmin(userId)) return;
+      if (!this.admin.isAdmin(userId)) return next();
       const mode = this.awaiting.get(userId);
-      if (!mode) return;
+      if (!mode) return next();
 
       const doc = ctx.message.document;
       const mime = doc.mime_type ?? '';
@@ -214,13 +192,11 @@ export class LibraryBotHandler {
       await this.handleUpload(ctx, mode, doc.file_id, filename, doc.file_size);
     });
 
-    // ── Приём audio (Telegram-аудио) ──────────────────────────────────────
-
-    bot.on('message:audio', async (ctx) => {
+    bot.on('message:audio', async (ctx, next) => {
       const userId = String(ctx.from?.id);
-      if (!this.admin.isAdmin(userId)) return;
+      if (!this.admin.isAdmin(userId)) return next();
       const mode = this.awaiting.get(userId);
-      if (mode !== 'music') return;
+      if (mode !== 'music') return next();
 
       this.awaiting.delete(userId);
       const audio = ctx.message.audio;
@@ -234,13 +210,11 @@ export class LibraryBotHandler {
       );
     });
 
-    // ── Приём video (со сжатием) ──────────────────────────────────────────
-
-    bot.on('message:video', async (ctx) => {
+    bot.on('message:video', async (ctx, next) => {
       const userId = String(ctx.from?.id);
-      if (!this.admin.isAdmin(userId)) return;
+      if (!this.admin.isAdmin(userId)) return next();
       const mode = this.awaiting.get(userId);
-      if (mode !== 'video') return;
+      if (mode !== 'video') return next();
 
       this.awaiting.delete(userId);
       await ctx.reply(
@@ -255,8 +229,6 @@ export class LibraryBotHandler {
       );
     });
   }
-
-  // ── Приватные методы ──────────────────────────────────────────────────
 
   private mainKeyboard(): InlineKeyboard {
     return new InlineKeyboard()
@@ -300,9 +272,7 @@ export class LibraryBotHandler {
       await ctx.api.editMessageText(
         String(ctx.chat?.id),
         uploadMsg.message_id,
-        `✅ ${emoji} Файл добавлен!\n\n` +
-          `📁 ${name}\n` +
-          `${label}: ${total} файлов`,
+        `✅ ${emoji} Файл добавлен!\n\n📁 ${name}\n${label}: ${total} файлов`,
       );
     } catch (e: any) {
       this.logger.error(`Library ${mode} upload failed: ${e?.message}`);

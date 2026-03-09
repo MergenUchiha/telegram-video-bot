@@ -31,10 +31,6 @@ export class SessionsService {
     });
   }
 
-  /**
-   * Создать новую сессию в режиме Spanish Jokes Auto.
-   * Сессия сразу переходит в READY_TO_RENDER — видео пользователя не нужно.
-   */
   async createSpanishJokesSession(userId: string) {
     await this.prisma.renderSession.updateMany({
       where: { userId, isActive: true },
@@ -64,7 +60,7 @@ export class SessionsService {
     });
   }
 
-  async setTelegramMeta(sessionId: string, meta: any) {
+  async setTelegramMeta(sessionId: string, meta: object) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
       data: { telegramMeta: meta },
@@ -108,7 +104,7 @@ export class SessionsService {
       where: { id: sessionId },
       data: {
         overlayComment,
-        overlayEnabled: overlayComment ? true : false,
+        overlayEnabled: overlayComment !== null && overlayComment !== '',
       },
     });
   }
@@ -152,10 +148,7 @@ export class SessionsService {
       ttsSpeed?: number | null;
     },
   ) {
-    return this.prisma.renderSession.update({
-      where: { id: sessionId },
-      data,
-    });
+    return this.prisma.renderSession.update({ where: { id: sessionId }, data });
   }
 
   async setAdvancedKeepWithTts(sessionId: string, enabled: boolean) {
@@ -168,7 +161,7 @@ export class SessionsService {
   async setCustomDuckDb(sessionId: string, duckDb: number | null) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: { customDuckDb: duckDb } as any,
+      data: { customDuckDb: duckDb },
     });
   }
 
@@ -179,63 +172,59 @@ export class SessionsService {
     });
   }
 
-  // ── Spanish Jokes Auto ────────────────────────────────────────────────────
-
   async setJokeText(sessionId: string, jokeText: string) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: { jokeText } as any,
+      data: { jokeText },
     });
   }
 
   async setJokeSourceUrl(sessionId: string, url: string | null) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: { jokeSourceUrl: url } as any,
+      data: { jokeSourceUrl: url },
     });
   }
 
   async setBackgroundVideoKey(sessionId: string, key: string | null) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: { backgroundVideoKey: key } as any,
+      data: { backgroundVideoKey: key },
     });
   }
 
   async setBackgroundMusicKey(sessionId: string, key: string | null) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: { backgroundMusicKey: key } as any,
+      data: { backgroundMusicKey: key },
     });
   }
 
   async setTextCardPreset(sessionId: string, preset: string) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: { textCardPreset: preset } as any,
+      data: { textCardPreset: preset },
     });
   }
 
   async setAutoPublishYoutube(sessionId: string, enabled: boolean) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: { autoPublishYoutube: enabled } as any,
+      data: { autoPublishYoutube: enabled },
     });
   }
 
-  /** Зафиксировать конкретное фоновое видео (null = случайное из библиотеки) */
   async setFixedBackgroundVideoKey(sessionId: string, key: string | null) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: { fixedBackgroundVideoKey: key } as any,
+      data: { fixedBackgroundVideoKey: key },
     });
   }
 
-  /** Зафиксировать конкретный музыкальный трек (null = случайный из библиотеки) */
   async setFixedBackgroundMusicKey(sessionId: string, key: string | null) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: { fixedBackgroundMusicKey: key } as any,
+      data: { fixedBackgroundMusicKey: key },
     });
   }
 }

@@ -7,11 +7,8 @@ import { LibraryBotHandler } from './library-bot.handler';
 function formatUnknownError(e: unknown): { message: string; stack?: string } {
   if (e instanceof Error) return { message: e.message, stack: e.stack };
   if (typeof e === 'string') return { message: e };
-  try {
-    return { message: JSON.stringify(e) };
-  } catch {
-    return { message: String(e) };
-  }
+  try { return { message: JSON.stringify(e) }; }
+  catch { return { message: String(e) }; }
 }
 
 @Injectable()
@@ -45,19 +42,12 @@ export class BotService implements OnModuleInit {
       this.logger.error(`Bot error on update ${updateId}: ${message}`, stack);
     });
 
-    // ── Регистрируем обработчики ─────────────────────────────────────────
-    // Порядок важен: LibraryBotHandler слушает message:document и message:video
-    // только когда есть флаг awaitingVideoUpload, поэтому конфликта нет.
     this.libraryHandler.register(bot);
     this.updates.register(bot);
 
-    const mode = (
-      this.config.get<string>('TELEGRAM_BOT_MODE') ?? 'polling'
-    ).toLowerCase();
+    const mode = (this.config.get<string>('TELEGRAM_BOT_MODE') ?? 'polling').toLowerCase();
     if (mode !== 'polling') {
-      this.logger.warn(
-        'TELEGRAM_BOT_MODE is not polling. For MVP set TELEGRAM_BOT_MODE=polling.',
-      );
+      this.logger.warn('TELEGRAM_BOT_MODE is not polling. For MVP set TELEGRAM_BOT_MODE=polling.');
     }
 
     this.logger.log('Starting Telegram bot (polling)...');

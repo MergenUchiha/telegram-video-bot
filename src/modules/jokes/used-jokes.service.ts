@@ -5,14 +5,13 @@ import { REDIS_CONNECTION } from '../redis/redis.constants';
 
 export interface PickResult {
   joke: string;
-  /** true — пул был исчерпан, история сброшена, пул обновлён снаружи */
   poolExhausted: boolean;
 }
 
 @Injectable()
 export class UsedJokesService {
   private readonly logger = new Logger(UsedJokesService.name);
-  private readonly TTL_SEC = 90 * 24 * 60 * 60; // 90 дней
+  private readonly TTL_SEC = 90 * 24 * 60 * 60;
 
   constructor(@Inject(REDIS_CONNECTION) private readonly redis: IORedis) {}
 
@@ -25,36 +24,24 @@ export class UsedJokesService {
   }
 
   /**
-   * Выбрать неиспользованный анекдот.
-   *
-   * Возвращает { joke, poolExhausted }.
-   * Если poolExhausted=true — вызывающий код должен обновить пул,
-   * а затем вызвать pickUnused снова с новым пулом.
-   *
-   * Если пул уже новый и всё равно все использованы
-   * (новые == старые) — сбрасываем историю и берём случайный.
+   * Выбрать неиспользованный анекдот из пула.
+   * НЕ помечает анекдот как использованный — для этого нужен явный вызов markUsed().
+   * Если poolExhausted=true, вызывающий код должен обновить пул и вызвать pick() снова.
    */
-  async pickUnused(
-    userId: string,
-    jokes: string[],
-  ): Promise<PickResult | null> {
+  async pick(userId: string, jokes: string[]): Promise<PickResult | null> {
     if (!jokes.length) return null;
 
-    const k = this.key(userId);
-    const usedHashes = new Set(await this.redis.smembers(k));
-
+    const usedHashes = new Set(await this.redis.smembers(this.key(userId)));
     const candidates = jokes.filter((j) => !usedHashes.has(this.hash(j)));
 
     if (candidates.length > 0) {
       const picked = candidates[Math.floor(Math.random() * candidates.length)];
       this.logger.debug(
-        `User ${userId}: ${candidates.length}/${jokes.length} unused jokes`,
+        `User ${userId}: ${candidates.length}/${jokes.length} unused jokes available`,
       );
-      await this.markUsed(userId, picked);
       return { joke: picked, poolExhausted: false };
     }
 
-    // Все анекдоты в текущем пуле использованы
     this.logger.log(
       `User ${userId}: pool exhausted (${jokes.length} jokes all used)`,
     );
@@ -64,7 +51,7 @@ export class UsedJokesService {
     };
   }
 
-  /** Пометить анекдот как использованный */
+  /** Пометить анекдот как использованный. Вызывается только после успешного рендера. */
   async markUsed(userId: string, jokeText: string): Promise<void> {
     const k = this.key(userId);
     await this.redis
@@ -72,10 +59,9 @@ export class UsedJokesService {
       .sadd(k, this.hash(jokeText))
       .expire(k, this.TTL_SEC)
       .exec();
-    this.logger.debug(`Marked used for ${userId}`);
+    this.logger.debug(`Marked used for user ${userId}`);
   }
 
-  /** Сбросить историю */
   async reset(userId: string): Promise<void> {
     await this.redis.del(this.key(userId));
     this.logger.log(`History reset for user ${userId}`);

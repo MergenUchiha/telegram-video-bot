@@ -15,7 +15,6 @@ export class CleanupService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    // Запускаем в фоне, не блокируем старт воркера
     this.cleanupStaleTmpDirs().catch((e) =>
       this.logger.warn(`tmp cleanup failed: ${e?.message}`),
     );
@@ -24,12 +23,6 @@ export class CleanupService implements OnModuleInit {
     );
   }
 
-  // ── Очистка осиротевших tmp-директорий ────────────────────────────────────
-
-  /**
-   * При перезапуске воркера (crash, kill) tmp-директории остаются.
-   * Удаляем всё старше TMP_CLEANUP_AGE_HOURS (default: 2h).
-   */
   private async cleanupStaleTmpDirs(): Promise<void> {
     const tmpRoot =
       this.config.get<string>('RENDER_TMP_DIR') ||
@@ -52,8 +45,7 @@ export class CleanupService implements OnModuleInit {
       const fullPath = path.join(tmpRoot, entry.name);
       try {
         const stat = await fs.promises.stat(fullPath);
-        const ageMs = Date.now() - stat.mtimeMs;
-        if (ageMs > maxAgeMs) {
+        if (Date.now() - stat.mtimeMs > maxAgeMs) {
           await fs.promises.rm(fullPath, { recursive: true, force: true });
           removed++;
         }
@@ -70,16 +62,6 @@ export class CleanupService implements OnModuleInit {
     }
   }
 
-  // ── S3 / MinIO lifecycle ──────────────────────────────────────────────────
-
-  /**
-   * Устанавливает lifecycle rules на бакете:
-   *  - inputs/  → удалять через INPUT_LIFECYCLE_DAYS  (default: 3)
-   *  - outputs/ → удалять через OUTPUT_LIFECYCLE_DAYS (default: 7)
-   *
-   * Безопасно вызывать повторно — перезаписывает правила.
-   * MinIO поддерживает PutBucketLifecycleConfiguration.
-   */
   private async ensureS3Lifecycle(): Promise<void> {
     const inputDays = Number(
       this.config.get<string>('INPUT_LIFECYCLE_DAYS', '3'),
@@ -90,11 +72,7 @@ export class CleanupService implements OnModuleInit {
 
     try {
       await this.storage.putBucketLifecycle([
-        {
-          id: 'expire-inputs',
-          prefix: 'inputs/',
-          expirationDays: inputDays,
-        },
+        { id: 'expire-inputs', prefix: 'inputs/', expirationDays: inputDays },
         {
           id: 'expire-outputs',
           prefix: 'outputs/',
@@ -105,7 +83,6 @@ export class CleanupService implements OnModuleInit {
         `S3 lifecycle set: inputs→${inputDays}d, outputs→${outputDays}d`,
       );
     } catch (e: any) {
-      // Не фатально — lifecycle это оптимизация
       this.logger.warn(`S3 lifecycle setup skipped: ${e?.message}`);
     }
   }

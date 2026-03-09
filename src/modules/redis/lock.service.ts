@@ -13,13 +13,9 @@ export class LockService {
     @Inject(REDIS_CONNECTION) private readonly redis: IORedis,
     private readonly config: ConfigService,
   ) {
-    this.ttlMs = Number(this.config.get<string>('LOCK_TTL_MS', '1800000')); // 30m
+    this.ttlMs = Number(this.config.get<string>('LOCK_TTL_MS', '1800000'));
   }
 
-  /**
-   * Лок на пользователя: “один рендер одновременно”.
-   * value = sessionId для дебага и безопасного unlock.
-   */
   async acquireUserRenderLock(
     userId: string,
     sessionId: string,
@@ -29,10 +25,6 @@ export class LockService {
     return res === 'OK' ? { ok: true, key } : { ok: false, key };
   }
 
-  /**
-   * Продлить лок (например, если рендер дольше).
-   * Возвращает false, если лок уже потерян.
-   */
   async refreshLock(
     key: string,
     sessionId: string,
@@ -49,9 +41,6 @@ export class LockService {
     return Number(res) === 1;
   }
 
-  /**
-   * Освободить лок только если value == sessionId (безопасно).
-   */
   async releaseLock(key: string, sessionId: string): Promise<boolean> {
     const lua = `
       if redis.call("GET", KEYS[1]) == ARGV[1] then
