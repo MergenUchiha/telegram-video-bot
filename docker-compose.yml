@@ -89,7 +89,7 @@ services:
     container_name: telegram-video-bot-api
     command: ['/app/docker/start-api.sh']
     env_file:
-      - .env.example
+      - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-renderer}:${POSTGRES_PASSWORD:-renderer_secret}@postgres:5432/${POSTGRES_DB:-renderer}
       REDIS_HOST: redis
@@ -129,7 +129,7 @@ services:
     container_name: telegram-video-bot-worker
     command: ['/app/docker/start-worker.sh']
     env_file:
-      - .env.example
+      - .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-renderer}:${POSTGRES_PASSWORD:-renderer_secret}@postgres:5432/${POSTGRES_DB:-renderer}
       REDIS_HOST: redis

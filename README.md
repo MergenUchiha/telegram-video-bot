@@ -188,6 +188,7 @@ The checked-in `docker-compose.yml` now contains the full runnable stack.
 The repository is now prepared for a single-command server bootstrap:
 
 ```bash
+cp .env.example .env
 docker compose up -d --build
 ```
 
@@ -211,7 +212,7 @@ Deployment behavior:
 
 Important runtime note:
 
-- `docker compose up -d --build` will boot the stack from a fresh clone using the checked-in `.env.example`
+- copy `.env.example` to `.env` before starting the stack
 - to actually receive Telegram renders, set at least `TELEGRAM_BOT_TOKEN` and `AUTONOMY_OPS_CHAT_ID`
 - to enable autonomous YouTube publishing, also set the `YOUTUBE_*` env vars
 
