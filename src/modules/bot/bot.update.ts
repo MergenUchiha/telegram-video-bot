@@ -13,6 +13,7 @@ import { JokesCacheService } from '../jokes/jokes-cache.service';
 import { UsedJokesService } from '../jokes/used-jokes.service';
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
+import { KOKORO_UNSUPPORTED_LANGUAGES } from '../tts/tts.service';
 
 // Что ждём от следующего текстового сообщения пользователя
 type WaitType =
@@ -25,6 +26,8 @@ type WaitType =
 interface WaitState {
   type: WaitType;
   panelMsgId: number;
+  /** ID сообщения-промпта от бота (нужно удалить после ввода или отмены) */
+  promptMsgId?: number;
 }
 
 // Пресеты карточки анекдота
@@ -410,7 +413,6 @@ export class BotUpdate {
         MAIN_MENU_TEXT,
         mainMenuKeyboard(),
       );
-      // Сбрасываем lastBotMessageId сессии чтобы новая сессия открылась свежо
       if (session && newId !== session.lastBotMessageId) {
         await this.sessions.setLastBotMessageId(session.id, null);
       }
@@ -462,7 +464,7 @@ export class BotUpdate {
 
       const session = await this.sessions.createNewSession(user.id);
       const msgId = ctx.callbackQuery?.message?.message_id as number;
-      const text = standardPanelText(session); // покажет "отправь видео"
+      const text = standardPanelText(session);
       const kb = standardPanelKeyboard(session);
       const newId = await editPanel(ctx, msgId, text, kb);
       await this.sessions.setLastBotMessageId(session.id, newId);
@@ -537,15 +539,13 @@ export class BotUpdate {
 
       if (session.contentMode === ContentMode.SPANISH_JOKES_AUTO) {
         await tryDelete(ctx, ctx.message.message_id);
-        return; // Auto-режиму видео не нужно
+        return;
       }
 
-      // Удаляем сообщение пользователя с видео (чисто в чате)
       await tryDelete(ctx, ctx.message.message_id);
 
       const panelMsgId = session.lastBotMessageId;
 
-      // Показываем "загружаю" в панели
       if (panelMsgId) {
         await editPanel(
           ctx,
@@ -637,19 +637,28 @@ export class BotUpdate {
       await cbRefresh(ctx, `Субтитры: ${cur === 'HARD' ? 'NONE' : 'HARD'}`);
     });
 
-    // Запрос текстового ввода — показываем промпт ниже и ждём
+    // ─────────────────────────────────────────────────────────────────────────
+    // Запрос текстового ввода — отправляем промпт и сохраняем его ID
+    // ─────────────────────────────────────────────────────────────────────────
     const askText = async (ctx: any, type: WaitType, prompt: string) => {
       await ctx.answerCallbackQuery();
       const { session } = await cbGetSession(ctx);
       if (!session) return;
       const panelMsgId = ctx.callbackQuery?.message?.message_id as number;
-      waiting.set(session.id, { type, panelMsgId });
-      await ctx.reply(prompt, {
+
+      // Отправляем промпт и сохраняем его ID для последующего удаления
+      const promptMsg = await ctx.reply(prompt, {
         parse_mode: 'HTML',
         reply_markup: new InlineKeyboard().text(
           '✕ Отмена',
           `cancel_input:${session.id}`,
         ),
+      });
+
+      waiting.set(session.id, {
+        type,
+        panelMsgId,
+        promptMsgId: promptMsg.message_id,
       });
     };
 
@@ -665,7 +674,7 @@ export class BotUpdate {
       askText(
         ctx,
         'language',
-        '🌐 <b>Язык TTS</b>\n\nОтправь код языка: <code>ru</code>, <code>en</code>, <code>es</code>, <code>de</code>, <code>fr</code>, <code>ja</code>, <code>zh</code>\nИли <code>auto</code> для автоопределения',
+        '🌐 <b>Язык TTS</b>\n\nОтправь код языка: <code>en</code>, <code>es</code>, <code>de</code>, <code>fr</code>, <code>ja</code>, <code>zh</code>\nИли <code>auto</code> для автоопределения\n',
       ),
     );
 
@@ -700,11 +709,14 @@ export class BotUpdate {
       );
     });
 
-    // Отмена ввода
+    // ─────────────────────────────────────────────────────────────────────────
+    // Отмена ввода — удаляем промпт-сообщение
+    // ─────────────────────────────────────────────────────────────────────────
     bot.callbackQuery(/^cancel_input:(.+)$/, async (ctx) => {
       await ctx.answerCallbackQuery({ text: 'Отменено' });
       const sessionId = ctx.match[1];
       waiting.delete(sessionId);
+      // Кнопка «Отмена» находится на самом промпт-сообщении — удаляем его
       try {
         await ctx.deleteMessage();
       } catch {}
@@ -778,9 +790,10 @@ export class BotUpdate {
       const { session } = await cbGetSession(ctx);
       if (!session) return ctx.answerCallbackQuery({ text: 'Нет сессии' });
       const panelMsgId = ctx.callbackQuery?.message?.message_id as number;
-      waiting.set(session.id, { type: 'duck_level', panelMsgId });
       await ctx.answerCallbackQuery();
-      await ctx.reply(
+
+      // Отправляем промпт и сохраняем его ID
+      const promptMsg = await ctx.reply(
         '🦆 <b>Duck уровень</b>\n\nОтправь уровень в дБ от <code>-40</code> до <code>-3</code>\nПример: <code>-24</code>',
         {
           parse_mode: 'HTML',
@@ -790,6 +803,12 @@ export class BotUpdate {
           ),
         },
       );
+
+      waiting.set(session.id, {
+        type: 'duck_level',
+        panelMsgId,
+        promptMsgId: promptMsg.message_id,
+      });
     });
 
     bot.callbackQuery('adv:back', async (ctx) => {
@@ -1073,7 +1092,6 @@ export class BotUpdate {
           `Твоя история сброшена: ${stats.remaining} новых\n\n` +
           `<b>Пример:</b>\n<i>${sample}</i>`;
 
-        const fresh = await this.sessions.getSessionById(session.id);
         await editPanel(
           ctx,
           msgId,
@@ -1109,7 +1127,6 @@ export class BotUpdate {
 
       const msgId = ctx.callbackQuery?.message?.message_id as number;
 
-      // Показываем "в очереди" немедленно
       await editPanel(
         ctx,
         msgId,
@@ -1181,6 +1198,17 @@ export class BotUpdate {
         }
         case 'language': {
           const val = text.toLowerCase() === 'auto' ? null : text.slice(0, 10);
+          // Предупреждаем если язык не поддерживается Kokoro TTS
+          if (val && KOKORO_UNSUPPORTED_LANGUAGES.has(val.toLowerCase())) {
+            errorMsg =
+              `⚠️ <b>Язык "${val}" не поддерживается Kokoro TTS.</b>\n\n` +
+              `Поддерживаемые языки:\n` +
+              `<code>en</code> · <code>es</code> · <code>fr</code> · <code>hi</code> · ` +
+              `<code>it</code> · <code>ja</code> · <code>pt</code> · <code>zh</code>\n\n` +
+              `Или <code>auto</code> для дефолтного (английский).\n\n` +
+              `<i>Для русского потребуется другая TTS-система.</i>`;
+            break;
+          }
           await this.sessions.setTtsSettings(session.id, { language: val });
           break;
         }
@@ -1223,7 +1251,7 @@ export class BotUpdate {
       }
 
       if (errorMsg) {
-        // Показываем ошибку — ждём нового ввода
+        // Ошибка — НЕ удаляем промпт, ждём нового ввода
         await ctx.reply(errorMsg, {
           parse_mode: 'HTML',
           reply_markup: new InlineKeyboard().text(
@@ -1234,7 +1262,10 @@ export class BotUpdate {
         return;
       }
 
-      // Ввод принят — обновляем панель
+      // Ввод принят — удаляем промпт-сообщение бота и обновляем панель
+      if (w.promptMsgId) {
+        await tryDelete(ctx, w.promptMsgId);
+      }
       waiting.delete(session.id);
       const fresh = await this.sessions.getSessionById(session.id);
       await refreshPanel(ctx, fresh, w.panelMsgId);

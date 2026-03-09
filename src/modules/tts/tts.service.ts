@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -7,7 +7,7 @@ import * as path from 'node:path';
 
 export type TtsRequest = {
   text: string;
-  language?: string | null; // не используется в OpenAI-compatible endpoint, оставляем для совместимости
+  language?: string | null;
   voiceId?: string | null;
   speed?: number | null;
 };
@@ -17,8 +17,57 @@ function truncate(s: string, n = 300) {
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
 
+/**
+ * Языки, которые поддерживает Kokoro (ghcr.io/remsky/kokoro-fastapi-cpu).
+ *
+ *   a = American English
+ *   b = British English
+ *   e = Spanish (es)
+ *   f = French (fr-fr)
+ *   h = Hindi
+ *   i = Italian
+ *   j = Japanese
+ *   p = Portuguese (pt-br)
+ *   z = Mandarin Chinese
+ *
+ * Русский (ru) НЕ поддерживается этой моделью.
+ * Для русского нужна другая TTS (Silero, XTTS, Edge-TTS и т.п.).
+ */
+const KOKORO_LANG_MAP: Record<string, string> = {
+  en: 'a',
+  'en-us': 'a',
+  'en-gb': 'b',
+  es: 'e',
+  fr: 'f',
+  'fr-fr': 'f',
+  hi: 'h',
+  it: 'i',
+  ja: 'j',
+  pt: 'p',
+  'pt-br': 'p',
+  zh: 'z',
+  'zh-cn': 'z',
+  'zh-tw': 'z',
+};
+
+/** Языки, которые точно НЕ поддерживаются Kokoro (для информирования пользователя) */
+export const KOKORO_UNSUPPORTED_LANGUAGES = new Set([
+  'ru',
+  'de',
+  'ko',
+  'ar',
+  'tr',
+  'pl',
+  'uk',
+  'nl',
+  'sv',
+  'fi',
+]);
+
 @Injectable()
 export class TtsService {
+  private readonly logger = new Logger(TtsService.name);
+
   constructor(
     private readonly http: HttpService,
     private readonly config: ConfigService,
@@ -35,7 +84,6 @@ export class TtsService {
   }
 
   private apiPath() {
-    // главный правильный endpoint для твоего Kokoro
     return (
       this.config.get<string>('KOKORO_API_PATH') || '/v1/audio/speech'
     ).trim();
@@ -50,11 +98,9 @@ export class TtsService {
   }
 
   private responseFormat(): 'mp3' | 'wav' | 'flac' | 'opus' | 'pcm' {
-    // В твоём openapi response_format поддерживает mp3/opus/flac/wav/pcm
     const v = (this.config.get<string>('KOKORO_RESPONSE_FORMAT') || 'wav')
       .trim()
       .toLowerCase();
-
     if (
       v === 'mp3' ||
       v === 'wav' ||
@@ -63,18 +109,36 @@ export class TtsService {
       v === 'pcm'
     )
       return v;
-
     return 'wav';
   }
 
-  /**
-   * Kokoro-fastapi endpoints бывают разными в образах.
-   * В твоём случае — OpenAI-compatible: POST /v1/audio/speech
-   * Мы используем KOKORO_API_PATH как главный, но оставляем fallback на старые пути.
-   */
+  /** ISO 639-1 / BCP-47 → Kokoro lang_code. Undefined если язык не поддерживается. */
+  getLangCode(language: string | null | undefined): string | undefined {
+    if (!language || language.toLowerCase() === 'auto') return undefined;
+    return KOKORO_LANG_MAP[language.toLowerCase()];
+  }
+
+  /** Проверяет, поддерживается ли язык Kokoro — для предупреждения в боте */
+  isLanguageSupported(language: string | null | undefined): boolean {
+    if (!language || language.toLowerCase() === 'auto') return true;
+    return !KOKORO_UNSUPPORTED_LANGUAGES.has(language.toLowerCase());
+  }
+
   async synthesizeToWav(outPath: string, req: TtsRequest): Promise<void> {
     const text = (req.text || '').trim();
     if (!text) throw new Error('TTS text is empty');
+
+    // Проверяем язык заранее и выдаём понятную ошибку вместо загадочного 500
+    if (
+      req.language &&
+      KOKORO_UNSUPPORTED_LANGUAGES.has(req.language.toLowerCase())
+    ) {
+      throw new Error(
+        `Язык "${req.language}" не поддерживается Kokoro TTS.\n` +
+          `Поддерживаемые языки: en, es, fr, hi, it, ja, pt, zh.\n` +
+          `Для русского языка потребуется другая TTS-система (Silero, Edge-TTS и т.п.).`,
+      );
+    }
 
     const base = this.baseUrl();
     const timeout = this.timeoutMs();
@@ -87,21 +151,30 @@ export class TtsService {
       '/v1/tts',
       '/synthesize',
     ];
-
-    // Уберём дубли и поставим primary первым
     const endpoints = Array.from(
       new Set(
         [primary, ...fallbacks].map((p) => (p.startsWith('/') ? p : `/${p}`)),
       ),
     );
 
-    const voice = (req.voiceId || this.defaultVoice()).trim();
+    const voice = (
+      req.voiceId && req.voiceId.toLowerCase() !== 'default'
+        ? req.voiceId
+        : this.defaultVoice()
+    ).trim();
+
     const speed =
       typeof req.speed === 'number' && !Number.isNaN(req.speed)
         ? req.speed
         : 1.0;
 
-    // OpenAI-compatible payload (как в openapi.json)
+    const langCode = this.getLangCode(req.language);
+    if (langCode) {
+      this.logger.log(
+        `TTS lang=${req.language} → lang_code=${langCode}, voice=${voice}`,
+      );
+    }
+
     const payload: any = {
       model: this.model(),
       input: text,
@@ -110,6 +183,8 @@ export class TtsService {
       speed,
       stream: false,
       return_download_link: false,
+      // lang_code добавляем только если язык реально поддерживается моделью
+      ...(langCode ? { lang_code: langCode } : {}),
     };
 
     let lastErr: any;
@@ -123,11 +198,9 @@ export class TtsService {
             timeout,
             headers: {
               'content-type': 'application/json',
-              // Многие сборки Kokoro отдают "сырой" аудиобуфер при этом заголовке
               'x-raw-response': 'true',
               accept: '*/*',
             },
-            // чтобы мы могли сформировать понятную ошибку со статусом и телом
             validateStatus: () => true,
           }),
         );
@@ -141,7 +214,6 @@ export class TtsService {
                   ? res.data.toString('utf8')
                   : String(res.data),
               );
-
           throw new Error(
             `Kokoro responded with status ${res.status} for ${ep}. Body: ${bodyPreview}`,
           );
@@ -160,9 +232,7 @@ export class TtsService {
 
     throw new Error(
       `Kokoro TTS request failed (tried ${endpoints.join(', ')}). ` +
-        `Check KOKORO_BASE_URL and KOKORO_API_PATH. Last error: ${
-          lastErr?.message || String(lastErr)
-        }`,
+        `Check KOKORO_BASE_URL and KOKORO_API_PATH. Last error: ${lastErr?.message || String(lastErr)}`,
     );
   }
 }
