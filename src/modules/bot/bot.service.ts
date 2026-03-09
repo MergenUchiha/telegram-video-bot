@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Bot } from 'grammy';
 import { BotUpdate } from './bot.update';
 import { LibraryBotHandler } from './library-bot.handler';
+import { AutonomyBotHandler } from '../autonomy/autonomy-bot.handler';
 
 function formatUnknownError(e: unknown): { message: string; stack?: string } {
   if (e instanceof Error) return { message: e.message, stack: e.stack };
@@ -22,11 +23,17 @@ export class BotService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly updates: BotUpdate,
     private readonly libraryHandler: LibraryBotHandler,
+    private readonly autonomyHandler: AutonomyBotHandler,
   ) {}
 
   async onModuleInit() {
     const token = this.config.get<string>('TELEGRAM_BOT_TOKEN');
-    if (!token) throw new Error('TELEGRAM_BOT_TOKEN is missing');
+    if (!token || token === 'your_token_here') {
+      this.logger.warn(
+        'Telegram bot startup skipped because TELEGRAM_BOT_TOKEN is not configured.',
+      );
+      return;
+    }
 
     const bot = new Bot(token);
 
@@ -49,6 +56,7 @@ export class BotService implements OnModuleInit {
     // Порядок важен: LibraryBotHandler слушает message:document и message:video
     // только когда есть флаг awaitingVideoUpload, поэтому конфликта нет.
     this.libraryHandler.register(bot);
+    this.autonomyHandler.register(bot);
     this.updates.register(bot);
 
     const mode = (

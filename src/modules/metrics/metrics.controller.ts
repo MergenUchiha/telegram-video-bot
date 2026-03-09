@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { MetricsService } from './metrics.service';
+import { AutonomyService } from '../autonomy/autonomy.service';
 
 /**
  * GET /metrics
@@ -18,6 +19,7 @@ export class MetricsController {
   constructor(
     private readonly metrics: MetricsService,
     private readonly config: ConfigService,
+    private readonly autonomy: AutonomyService,
   ) {}
 
   @Get()
@@ -31,6 +33,7 @@ export class MetricsController {
     }
 
     const summary = await this.metrics.getSummary();
+    const autonomy = await this.autonomy.getMetricsSummary();
 
     return {
       jobs: {
@@ -55,6 +58,7 @@ export class MetricsController {
         finishedAt: j.finishedAt,
         error: j.error ?? null,
       })),
+      autonomy,
       generatedAt: new Date().toISOString(),
     };
   }

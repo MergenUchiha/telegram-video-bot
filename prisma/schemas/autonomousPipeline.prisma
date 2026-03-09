@@ -1,0 +1,25 @@
+model AutonomousPipeline {
+  id                 String              @id @default(uuid()) @db.Uuid
+  key                String              @unique
+  enabled            Boolean             @default(false)
+  ownerUserId        String              @map("owner_user_id") @db.Uuid
+  ownerUser          User                @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  opsTelegramChatId  String              @map("ops_telegram_chat_id")
+  timezone           String              @default("Asia/Ashgabat")
+  windowStartMinutes Int                 @default(540) @map("window_start_minutes")
+  windowEndMinutes   Int                 @default(1260) @map("window_end_minutes")
+  defaultDailyCount  Int                 @default(5) @map("default_daily_count")
+  maxDailyCount      Int                 @default(12) @map("max_daily_count")
+  contentMode        ContentMode         @default(SPANISH_JOKES_AUTO) @map("content_mode")
+  youtubeVisibility  YoutubeVisibility   @default(PUBLIC) @map("youtube_visibility")
+  titleSuffix        String              @default("#shorts") @map("title_suffix")
+  descriptionFooter  String?             @map("description_footer")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+
+  overrides          AutonomousDayOverride[]
+  dayPlans           AutonomousDayPlan[]
+
+  @@index([ownerUserId])
+  @@map("autonomous_pipelines")
+}

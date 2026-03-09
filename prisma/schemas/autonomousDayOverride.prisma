@@ -1,0 +1,15 @@
+model AutonomousDayOverride {
+  id                      String            @id @default(uuid()) @db.Uuid
+  pipelineId              String            @map("pipeline_id") @db.Uuid
+  pipeline                AutonomousPipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  planDate                DateTime          @db.Date @map("plan_date")
+  targetCount             Int               @map("target_count")
+  createdByTelegramUserId String            @map("created_by_telegram_user_id")
+  reason                  String?
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
+
+  @@unique([pipelineId, planDate])
+  @@index([planDate])
+  @@map("autonomous_day_overrides")
+}

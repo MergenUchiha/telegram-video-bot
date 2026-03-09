@@ -23,6 +23,8 @@ import { UsedJokesService } from '../modules/jokes/used-jokes.service';
 import { JokesCacheService } from '../modules/jokes/jokes-cache.service';
 import { BackgroundLibraryService } from '../modules/library/background-library.service';
 import { MusicLibraryService } from '../modules/library/music-library.service';
+import { QueuesService } from '../modules/queues/queues.service';
+import { AutonomyService } from '../modules/autonomy/autonomy.service';
 import {
   TextCardService,
   TextCardPreset,
@@ -50,6 +52,8 @@ export class RenderProcessor extends WorkerHost {
     private readonly bgLibrary: BackgroundLibraryService,
     private readonly musicLibrary: MusicLibraryService,
     private readonly textCard: TextCardService,
+    private readonly queues: QueuesService,
+    private readonly autonomy: AutonomyService,
   ) {
     super();
     this.logger.log('RenderProcessor initialized');
@@ -58,6 +62,7 @@ export class RenderProcessor extends WorkerHost {
   async process(job: Job<RenderJobPayload>): Promise<void> {
     const { sessionId, userId, chatId } = job.data;
     const startedAt = new Date();
+    let session: any = null;
 
     const tmpRoot =
       this.config.get<string>('RENDER_TMP_DIR') ||
@@ -83,10 +88,9 @@ export class RenderProcessor extends WorkerHost {
     // ── Distributed lock ──────────────────────────────────────────────────
     const lockResult = await this.lock.acquireUserRenderLock(userId, sessionId);
     if (!lockResult.ok) {
-      this.logger.warn(
-        `Lock busy for user ${userId}, session ${sessionId} — skipping`,
+      throw new Error(
+        `Lock busy for user ${userId}, session ${sessionId} — retry later`,
       );
-      return;
     }
     const lockKey = lockResult.key;
 
@@ -104,8 +108,11 @@ export class RenderProcessor extends WorkerHost {
       });
       await this.progress.setProgress(sessionId, 5);
 
-      const session = await this.sessions.getSessionById(sessionId);
+      session = await this.sessions.getSessionById(sessionId);
       if (!session) throw new Error(`Session not found: ${sessionId}`);
+      if ((session as any).triggerSource === 'AUTONOMOUS') {
+        await this.autonomy.markRunRenderingBySession(sessionId).catch(() => {});
+      }
 
       // ── Роутинг по режиму ─────────────────────────────────────────────
       if ((session as any).contentMode === ContentMode.SPANISH_JOKES_AUTO) {
@@ -136,9 +143,21 @@ export class RenderProcessor extends WorkerHost {
       }
     } catch (e: any) {
       const msg = clip(e?.message || String(e), 1600);
-      const finishedAt = new Date();
+      const finalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
 
       await this.progress.setLastError(sessionId, msg);
+
+      if (!finalAttempt) {
+        await this.progress.setStatus(sessionId, {
+          state: 'RENDERING',
+          updatedAt: new Date().toISOString(),
+          message: `Retrying after error (${job.attemptsMade + 1}/${job.opts.attempts ?? 1})`,
+        });
+        throw e;
+      }
+
+      const finishedAt = new Date();
+
       await this.progress.setStatus(sessionId, {
         state: 'RENDER_FAILED',
         updatedAt: new Date().toISOString(),
@@ -150,6 +169,10 @@ export class RenderProcessor extends WorkerHost {
           RenderSessionState.RENDER_FAILED,
         );
       } catch {}
+
+      if ((session as any)?.triggerSource === 'AUTONOMOUS') {
+        await this.autonomy.markRunFailedBySession(sessionId, msg).catch(() => {});
+      }
 
       await this.metrics
         .recordJobFailed({
@@ -405,7 +428,7 @@ export class RenderProcessor extends WorkerHost {
     );
     await this.progress.setProgress(sessionId, 80);
 
-    await this.finalizeAndSend(session.id, chatId, outPath, startedAt);
+    await this.finalizeSessionOutput(session, chatId, outPath, startedAt);
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -424,6 +447,10 @@ export class RenderProcessor extends WorkerHost {
     startedAt: Date,
   ): Promise<void> {
     const sessionId = session.id;
+    const defaultAutoDurationSec = Math.max(
+      10,
+      Number(this.config.get<string>('AUTO_VIDEO_DURATION_SEC', '30')) || 30,
+    );
 
     // ── Шаг 1: Парсинг анекдота ────────────────────────────────────────────
     await this.progress.setStatus(sessionId, {
@@ -433,41 +460,53 @@ export class RenderProcessor extends WorkerHost {
     });
     await this.progress.setProgress(sessionId, 10);
 
-    // Берём пул из Redis (без TTL — живёт до исчерпания)
-    let jokes = await this.jokesCache.getPool();
-    if (!jokes.length) throw new Error('Нет доступных анекдотов');
+    let jokeText =
+      typeof session.jokeText === 'string' && session.jokeText.trim()
+        ? session.jokeText.trim()
+        : null;
 
-    // pickUnused возвращает { joke, poolExhausted }
-    let pickResult = await this.usedJokes.pickUnused(userId, jokes);
-    if (!pickResult) throw new Error('Не удалось выбрать анекдот');
+    if (!jokeText) {
+      // Берём пул из Redis (без TTL — живёт до исчерпания)
+      let jokes = await this.jokesCache.getPool();
+      if (!jokes.length) throw new Error('Нет доступных анекдотов');
 
-    if (pickResult.poolExhausted) {
-      // Все анекдоты использованы → грузим свежий пул с сайтов
-      this.logger.log(
-        `[${sessionId}] Pool exhausted — fetching fresh jokes from web...`,
-      );
-      await this.progress.setStatus(sessionId, {
-        state: 'RENDERING',
-        updatedAt: new Date().toISOString(),
-        message: 'Пул анекдотов исчерпан, загружаю новые...',
-      });
+      // pickUnused возвращает { joke, poolExhausted }
+      let pickResult = await this.usedJokes.pickUnused(userId, jokes);
+      if (!pickResult) throw new Error('Не удалось выбрать анекдот');
 
-      jokes = await this.jokesCache.refreshCache();
-      await this.usedJokes.reset(userId); // сбрасываем историю под новый пул
+      if (pickResult.poolExhausted) {
+        // Все анекдоты использованы → грузим свежий пул с сайтов
+        this.logger.log(
+          `[${sessionId}] Pool exhausted — fetching fresh jokes from web...`,
+        );
+        await this.progress.setStatus(sessionId, {
+          state: 'RENDERING',
+          updatedAt: new Date().toISOString(),
+          message: 'Пул анекдотов исчерпан, загружаю новые...',
+        });
 
-      pickResult = await this.usedJokes.pickUnused(userId, jokes);
-      if (!pickResult)
-        throw new Error('Не удалось выбрать анекдот после обновления пула');
+        jokes = await this.jokesCache.refreshCache();
+        await this.usedJokes.reset(userId); // сбрасываем историю под новый пул
 
-      this.logger.log(
-        `[${sessionId}] Fresh pool loaded: ${jokes.length} jokes`,
-      );
+        pickResult = await this.usedJokes.pickUnused(userId, jokes);
+        if (!pickResult)
+          throw new Error('Не удалось выбрать анекдот после обновления пула');
+
+        this.logger.log(`[${sessionId}] Fresh pool loaded: ${jokes.length} jokes`);
+      }
+
+      jokeText = pickResult.joke;
+    } else {
+      this.logger.log(`[${sessionId}] Using prefilled joke text from session`);
     }
-
-    const jokeText = pickResult.joke;
 
     // Сохраняем текст анекдота в сессию для истории
     await this.sessions.setJokeText(sessionId, jokeText);
+    if ((session as any).autonomousRunId) {
+      await this.autonomy
+        .setRunJokeSnapshot((session as any).autonomousRunId, jokeText)
+        .catch(() => {});
+    }
     this.logger.log(
       `[${sessionId}] Joke selected: ${jokeText.slice(0, 60)}...`,
     );
@@ -491,12 +530,9 @@ export class RenderProcessor extends WorkerHost {
     if (!bgVideoKey) {
       bgVideoKey = await this.bgLibrary.pickRandom();
     }
-    if (!bgVideoKey) {
-      throw new Error(
-        'Библиотека фоновых видео пуста. Загрузи видео через /library.',
-      );
+    if (bgVideoKey) {
+      await this.sessions.setBackgroundVideoKey(sessionId, bgVideoKey);
     }
-    await this.sessions.setBackgroundVideoKey(sessionId, bgVideoKey);
 
     // ── Шаг 3: Выбор музыки ───────────────────────────────────────────────
     await this.progress.setStatus(sessionId, {
@@ -527,7 +563,21 @@ export class RenderProcessor extends WorkerHost {
     const cardAssPath = path.join(tmpDir, 'joke_card.ass');
     const outPath = path.join(tmpDir, 'out.mp4');
 
-    await this.storage.downloadToFile(bgVideoKey, bgPath);
+    if (bgVideoKey) {
+      await this.storage.downloadToFile(bgVideoKey, bgPath);
+    } else {
+      await this.buildGeneratedAutoBackground(
+        ffmpegPath,
+        bgPath,
+        outW,
+        outH,
+        defaultAutoDurationSec,
+        renderTimeoutMs,
+      );
+      this.logger.warn(
+        `[${sessionId}] Background library empty, using generated fallback background`,
+      );
+    }
     await this.progress.setProgress(sessionId, 40);
 
     let hasMusicFile = false;
@@ -539,7 +589,7 @@ export class RenderProcessor extends WorkerHost {
     // ── Шаг 5: Пробуем фоновое видео ─────────────────────────────────────
     const meta = await this.probe.probe(bgPath);
     const fps = meta.fps || 30;
-    const durationSec = meta.durationSec || 30;
+    const durationSec = meta.durationSec || defaultAutoDurationSec;
 
     // ── Шаг 6: Генерируем текстовую карточку ─────────────────────────────
     await this.progress.setStatus(sessionId, {
@@ -598,10 +648,13 @@ export class RenderProcessor extends WorkerHost {
     await this.progress.setProgress(sessionId, 85);
 
     // ── Шаг 9: (markUsed уже вызван внутри pickUnused — до рендера) Загрузка и отправка ───────────────────────────────────────
-    await this.finalizeAndSend(sessionId, chatId, outPath, startedAt);
+    await this.finalizeSessionOutput(session, chatId, outPath, startedAt);
 
     // ── Шаг 10: Авто-публикация на YouTube (если включено) ───────────────
-    if ((session as any).autoPublishYoutube) {
+    if (
+      (session as any).autoPublishYoutube &&
+      (session as any).triggerSource !== 'AUTONOMOUS'
+    ) {
       await this.triggerYoutubeAutoPublish(session, userId, chatId);
     }
   }
@@ -720,36 +773,121 @@ export class RenderProcessor extends WorkerHost {
     );
   }
 
+  /** Zero-config fallback background for smoke tests and empty libraries. */
+  private async buildGeneratedAutoBackground(
+    ffmpegPath: string,
+    outPath: string,
+    outW: number,
+    outH: number,
+    durationSec: number,
+    renderTimeoutMs: number,
+  ): Promise<void> {
+    const duration = String(Math.max(10, Math.round(durationSec * 100) / 100));
+
+    await this.runFfmpeg(
+      ffmpegPath,
+      [
+        '-y',
+        '-f',
+        'lavfi',
+        '-i',
+        `color=c=0x152238:s=${outW}x${outH}:d=${duration}:r=30`,
+        '-an',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '23',
+        '-pix_fmt',
+        'yuv420p',
+        outPath,
+      ],
+      renderTimeoutMs,
+    );
+  }
+
   // ════════════════════════════════════════════════════════════════════════
   // ОБЩИЕ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
   // ════════════════════════════════════════════════════════════════════════
 
-  /** Загрузить результат в S3 и отправить пользователю */
-  private async finalizeAndSend(
-    sessionId: string,
+  /** Загрузить результат в S3 и либо отправить в Telegram, либо передать в YouTube pipeline */
+  private async finalizeSessionOutput(
+    session: any,
     chatId: string,
     outPath: string,
     startedAt: Date,
   ): Promise<void> {
+    const sessionId = session.id;
     const outKey = `outputs/${sessionId}/${randomUUID()}.mp4`;
     await this.storage.uploadFile(outKey, outPath, 'video/mp4');
     await this.sessions.setOutputVideoKey(sessionId, outKey);
     await this.progress.setProgress(sessionId, 90);
 
-    const url = await this.storage.presignGetUrl(outKey);
-    try {
-      await this.tg.sendVideoFile(chatId, outPath, '✅ Рендер завершён!');
-    } catch {
-      await this.tg.sendVideoByUrl(chatId, url, '✅ Рендер завершён! (ссылка)');
-    }
+    if ((session as any).triggerSource === 'AUTONOMOUS') {
+      const runId =
+        ((session as any).autonomousRunId as string | null) ??
+        (await this.autonomy.getRunBySessionId(sessionId))?.id ??
+        null;
+      if (!runId) {
+        throw new Error(`Autonomous run linkage missing for session ${sessionId}`);
+      }
 
-    await this.sessions.setState(sessionId, RenderSessionState.RENDER_DONE);
-    await this.progress.setStatus(sessionId, {
-      state: 'RENDER_DONE',
-      updatedAt: new Date().toISOString(),
-      message: 'Готово',
-    });
-    await this.progress.setProgress(sessionId, 100);
+      await this.sessions.setState(sessionId, RenderSessionState.YOUTUBE_UPLOADING);
+      await this.progress.setStatus(sessionId, {
+        state: 'YOUTUBE_UPLOADING',
+        updatedAt: new Date().toISOString(),
+        message: 'Render complete, queueing YouTube upload',
+      } as any);
+      await this.progress.setProgress(sessionId, 95);
+      await this.autonomy.markRunYoutubeUploadingBySession(sessionId).catch(() => {});
+
+      await this.queues.enqueueYoutubeUpload({
+        sessionId,
+        runId,
+        opsChatId: chatId,
+      });
+      await this.tg
+        .sendMessage(chatId, `📺 Render complete, starting YouTube upload\nRun: ${runId}`)
+        .catch(() => {});
+    } else {
+      const url = await this.storage.presignGetUrl(outKey);
+      let deliveredToTelegram = false;
+
+      if (chatId) {
+        try {
+          await this.tg.sendVideoFile(chatId, outPath, '✅ Рендер завершён!');
+          deliveredToTelegram = true;
+        } catch (sendFileError) {
+          try {
+            await this.tg.sendVideoByUrl(
+              chatId,
+              url,
+              '✅ Рендер завершён! (ссылка)',
+            );
+            deliveredToTelegram = true;
+          } catch (sendUrlError) {
+            this.logger.warn(
+              `[${sessionId}] Telegram delivery skipped: ${String(
+                (sendUrlError as Error)?.message ||
+                  (sendFileError as Error)?.message ||
+                  sendUrlError,
+              )}`,
+            );
+          }
+        }
+      }
+
+      await this.sessions.setState(sessionId, RenderSessionState.RENDER_DONE);
+      await this.progress.setStatus(sessionId, {
+        state: 'RENDER_DONE',
+        updatedAt: new Date().toISOString(),
+        message: deliveredToTelegram
+          ? 'Готово'
+          : 'Готово (доступно через ops status endpoint)',
+      });
+      await this.progress.setProgress(sessionId, 100);
+    }
 
     const finishedAt = new Date();
     await this.metrics

@@ -1,0 +1,18 @@
+model AutonomousDayPlan {
+  id          String                  @id @default(uuid()) @db.Uuid
+  pipelineId  String                  @map("pipeline_id") @db.Uuid
+  pipeline    AutonomousPipeline      @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  planDate    DateTime                @db.Date @map("plan_date")
+  targetCount Int                     @map("target_count")
+  source      AutonomousDayPlanSource @default(DEFAULT)
+  status      AutonomousDayPlanStatus @default(PLANNED)
+  createdAt   DateTime                @default(now()) @map("created_at")
+  updatedAt   DateTime                @updatedAt @map("updated_at")
+
+  runs        AutonomousRun[]
+
+  @@unique([pipelineId, planDate])
+  @@index([planDate])
+  @@index([status])
+  @@map("autonomous_day_plans")
+}

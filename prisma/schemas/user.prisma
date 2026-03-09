@@ -7,6 +7,7 @@ model User {
 
   sessions       RenderSession[]
   youtubeChannels YoutubeChannel[]
+  autonomousPipelines AutonomousPipeline[]
 
   @@map("users")
 }

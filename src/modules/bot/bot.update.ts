@@ -53,6 +53,7 @@ export class BotUpdate {
         command: 'auto',
         description: '🎭 Spanish Jokes Auto — ролик автоматически',
       },
+      { command: 'autonomy', description: '🤖 Автономный планировщик' },
       { command: 'status', description: '📊 Статус рендера' },
       { command: 'settings', description: '⚙️ Настройки текущей сессии' },
       { command: 'start', description: '👋 Приветствие и помощь' },

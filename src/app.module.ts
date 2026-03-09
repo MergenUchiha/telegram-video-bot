@@ -4,7 +4,6 @@ import { PrismaModule } from './modules/prisma/prisma.module';
 import { BotModule } from './modules/bot/bot.module';
 import { RedisModule } from './modules/redis/redis.module';
 import { QueuesModule } from './modules/queues/queues.module';
-import { WorkerModule } from './worker/worker.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { TelegramFilesModule } from './modules/telegram-files/telegram-files.module';
 import { TelegramSenderModule } from './modules/telegram-sender/telegram-sender.module';
@@ -15,6 +14,8 @@ import { MetricsModule } from './modules/metrics/metrics.module';
 import { JokesModule } from './modules/jokes/jokes.module';
 import { LibraryModule } from './modules/library/library.module';
 import { TextCardModule } from './modules/text-card/text-card.module';
+import { BullBoardAppModule } from './modules/bull-board/bull-board.module';
+import { OpsModule } from './modules/ops/ops.module';
 
 @Module({
   imports: [
@@ -29,8 +30,9 @@ import { TextCardModule } from './modules/text-card/text-card.module';
     SubtitlesModule,
     QueuesModule,
     BotModule,
-    WorkerModule,
     MetricsModule,
+    BullBoardAppModule,
+    OpsModule,
 
     // ── Stage 3: Spanish Jokes Auto ──────────────────────────────────────
     JokesModule,

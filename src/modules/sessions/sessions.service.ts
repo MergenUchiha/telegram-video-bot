@@ -50,6 +50,24 @@ export class SessionsService {
     });
   }
 
+  async createAutonomousSession(
+    userId: string,
+    autonomousRunId: string,
+    contentMode: ContentMode = ContentMode.SPANISH_JOKES_AUTO,
+  ) {
+    return this.prisma.renderSession.create({
+      data: {
+        userId,
+        isActive: false,
+        state: RenderSessionState.READY_TO_RENDER,
+        contentMode,
+        autoPublishYoutube: true,
+        triggerSource: 'AUTONOMOUS' as any,
+        autonomousRunId,
+      } as any,
+    });
+  }
+
   async setState(sessionId: string, state: RenderSessionState) {
     return this.prisma.renderSession.update({
       where: { id: sessionId },

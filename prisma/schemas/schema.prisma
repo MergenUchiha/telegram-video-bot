@@ -55,3 +55,37 @@ enum YoutubeUploadStatus {
   DONE
   FAILED
 }
+
+enum TriggerSource {
+  MANUAL
+  AUTONOMOUS
+}
+
+enum YoutubeVisibility {
+  PUBLIC
+  PRIVATE
+  UNLISTED
+}
+
+enum AutonomousDayPlanSource {
+  DEFAULT
+  OVERRIDE
+}
+
+enum AutonomousDayPlanStatus {
+  PLANNED
+  IN_PROGRESS
+  DONE
+  PARTIAL_FAILED
+  FAILED
+}
+
+enum AutonomousRunState {
+  PLANNED
+  QUEUED
+  RENDERING
+  YOUTUBE_UPLOADING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}

@@ -10,6 +10,7 @@ import { RedisModule } from '../redis/redis.module';
 import { LibraryModule } from '../library/library.module';
 import { RateLimitService } from './rate-limit.service';
 import { JokesModule } from '../jokes/jokes.module';
+import { AutonomyModule } from '../autonomy/autonomy.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { JokesModule } from '../jokes/jokes.module';
     RedisModule,
     LibraryModule,
     JokesModule,
+    AutonomyModule,
   ],
   providers: [BotService, BotUpdate, LibraryBotHandler, RateLimitService],
 })

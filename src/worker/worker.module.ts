@@ -1,9 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { BullModule } from '@nestjs/bullmq';
-
-import { buildBullMQOptions } from '../modules/queues/bullmq.config';
-import { QUEUE_RENDER } from '../modules/redis/redis.constants';
+import { ConfigModule } from '@nestjs/config';
 
 import { RedisModule } from '../modules/redis/redis.module';
 import { SessionsModule } from '../modules/sessions/sessions.module';
@@ -17,18 +13,19 @@ import { MetricsModule } from '../modules/metrics/metrics.module';
 import { JokesModule } from '../modules/jokes/jokes.module';
 import { LibraryModule } from '../modules/library/library.module';
 import { TextCardModule } from '../modules/text-card/text-card.module';
+import { QueuesModule } from '../modules/queues/queues.module';
+import { AutonomyModule } from '../modules/autonomy/autonomy.module';
+import { YoutubeModule } from '../modules/youtube/youtube.module';
 
 import { RenderProcessor } from './render.processor';
 import { CleanupService } from './cleanup.service';
+import { AutonomySchedulerService } from './autonomy-scheduler.service';
+import { AutonomyProcessor } from './autonomy.processor';
+import { YouTubeUploadProcessor } from './youtube-upload.processor';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => buildBullMQOptions(config),
-    }),
-    BullModule.registerQueue({ name: QUEUE_RENDER }),
     PrismaModule,
     SessionsModule,
     StorageModule,
@@ -41,7 +38,16 @@ import { CleanupService } from './cleanup.service';
     JokesModule,
     LibraryModule,
     TextCardModule,
+    QueuesModule,
+    AutonomyModule,
+    YoutubeModule,
   ],
-  providers: [RenderProcessor, CleanupService],
+  providers: [
+    RenderProcessor,
+    CleanupService,
+    AutonomySchedulerService,
+    AutonomyProcessor,
+    YouTubeUploadProcessor,
+  ],
 })
 export class WorkerModule {}

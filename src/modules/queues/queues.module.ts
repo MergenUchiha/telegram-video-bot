@@ -3,7 +3,11 @@ import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
 import { buildBullMQOptions } from './bullmq.config';
-import { QUEUE_RENDER } from '../redis/redis.constants';
+import {
+  QUEUE_AUTONOMY,
+  QUEUE_RENDER,
+  QUEUE_YOUTUBE_UPLOAD,
+} from '../redis/redis.constants';
 import { QueuesService } from './queues.service';
 
 @Module({
@@ -15,6 +19,12 @@ import { QueuesService } from './queues.service';
     }),
     BullModule.registerQueue({
       name: QUEUE_RENDER,
+    }),
+    BullModule.registerQueue({
+      name: QUEUE_AUTONOMY,
+    }),
+    BullModule.registerQueue({
+      name: QUEUE_YOUTUBE_UPLOAD,
     }),
   ],
   providers: [QueuesService],

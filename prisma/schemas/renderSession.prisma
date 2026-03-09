@@ -5,6 +5,8 @@ model RenderSession {
 
   state              RenderSessionState  @default(WAIT_VIDEO)
   isActive           Boolean             @default(true) @map("is_active")
+  triggerSource      TriggerSource       @default(MANUAL) @map("trigger_source")
+  autonomousRunId    String?             @map("autonomous_run_id") @db.Uuid
 
   // ── Режим обработки ───────────────────────────────────────────────────────
   contentMode        ContentMode         @default(STANDARD) @map("content_mode")
@@ -69,9 +71,12 @@ model RenderSession {
 
   jobs               RenderJob[]
   youtubeUploads     YoutubeUpload[]
+  autonomousRun      AutonomousRun?      @relation("AutonomousRunRenderSession")
 
   @@index([userId, isActive])
   @@index([state])
   @@index([contentMode])
+  @@index([triggerSource])
+  @@index([autonomousRunId])
   @@map("render_sessions")
 }

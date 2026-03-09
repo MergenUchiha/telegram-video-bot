@@ -1,6 +1,8 @@
 export const REDIS_CONNECTION = 'REDIS_CONNECTION';
 
 export const QUEUE_RENDER = 'render';
+export const QUEUE_AUTONOMY = 'autonomy';
+export const QUEUE_YOUTUBE_UPLOAD = 'youtube_upload';
 
 export const REDIS_KEYS = {
   // “одно видео за раз” — глобально или на пользователя
@@ -23,4 +25,7 @@ export type SessionState =
   | 'RENDER_QUEUED'
   | 'RENDERING'
   | 'RENDER_DONE'
-  | 'RENDER_FAILED';
+  | 'RENDER_FAILED'
+  | 'YOUTUBE_UPLOADING'
+  | 'YOUTUBE_DONE'
+  | 'YOUTUBE_FAILED';

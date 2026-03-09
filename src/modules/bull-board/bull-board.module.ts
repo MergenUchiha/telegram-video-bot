@@ -9,7 +9,11 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { ExpressAdapter } from '@bull-board/express';
 import { ConfigService } from '@nestjs/config';
 import { NextFunction, Request, Response } from 'express';
-import { QUEUE_RENDER } from '../redis/redis.constants';
+import {
+  QUEUE_AUTONOMY,
+  QUEUE_RENDER,
+  QUEUE_YOUTUBE_UPLOAD,
+} from '../redis/redis.constants';
 
 /**
  * Монтирует Bull Board UI по маршруту /admin/queues.
@@ -28,6 +32,14 @@ import { QUEUE_RENDER } from '../redis/redis.constants';
     }),
     BullBoardModule.forFeature({
       name: QUEUE_RENDER,
+      adapter: BullMQAdapter,
+    }),
+    BullBoardModule.forFeature({
+      name: QUEUE_AUTONOMY,
+      adapter: BullMQAdapter,
+    }),
+    BullBoardModule.forFeature({
+      name: QUEUE_YOUTUBE_UPLOAD,
       adapter: BullMQAdapter,
     }),
   ],

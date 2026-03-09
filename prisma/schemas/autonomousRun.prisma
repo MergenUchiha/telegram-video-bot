@@ -1,0 +1,24 @@
+model AutonomousRun {
+  id               String             @id @default(uuid()) @db.Uuid
+  dayPlanId        String             @map("day_plan_id") @db.Uuid
+  dayPlan          AutonomousDayPlan  @relation(fields: [dayPlanId], references: [id], onDelete: Cascade)
+  slotIndex        Int                @map("slot_index")
+  scheduledAt      DateTime           @map("scheduled_at")
+  state            AutonomousRunState @default(PLANNED)
+  renderSessionId  String?            @unique @map("render_session_id") @db.Uuid
+  renderSession    RenderSession?     @relation("AutonomousRunRenderSession", fields: [renderSessionId], references: [id], onDelete: SetNull)
+  youtubeUploadId  String?            @map("youtube_upload_id") @db.Uuid
+  youtubeUpload    YoutubeUpload?     @relation(fields: [youtubeUploadId], references: [id], onDelete: SetNull)
+  youtubeVideoId   String?            @map("youtube_video_id")
+  attemptCount     Int                @default(0) @map("attempt_count")
+  lastError        String?            @map("last_error")
+  jokeTextSnapshot String?            @map("joke_text_snapshot")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  @@unique([dayPlanId, slotIndex])
+  @@index([scheduledAt])
+  @@index([state])
+  @@index([youtubeUploadId])
+  @@map("autonomous_runs")
+}

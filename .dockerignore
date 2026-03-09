@@ -1,0 +1,10 @@
+node_modules
+dist
+.git
+.gitignore
+.DS_Store
+*.log
+coverage
+tmp
+Dockerfile*
+docker-compose.override.yml
