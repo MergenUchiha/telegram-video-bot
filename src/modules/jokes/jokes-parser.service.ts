@@ -171,55 +171,59 @@ export class JokesParserService {
       ],
     },
     {
+      // chistes.net — табличная структура, анекдоты в <td class="fondo2">
       name: 'chistes.net',
       pageUrl: (p) =>
         p === 1
-          ? 'https://www.chistes.net/chistes-cortos/'
-          : `https://www.chistes.net/chistes-cortos/pag${p}.asp`,
+          ? 'https://www.chistes.net/ChistesCortos.aspx'
+          : `https://www.chistes.net/ChistesCortos.aspx?pagina=${p}`,
       maxPages: 5,
       selectors: [
         {
           pattern:
-            /<div[^>]*class="[^"]*(?:chiste|texto|joke)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
+            /<div[^>]*class="[^"]*(?:texto-chiste|chiste-item|joke-item|chiste)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
           group: 1,
         },
         {
           pattern:
-            /<td[^>]*class="[^"]*(?:chiste|texto|joke|contenido)[^"]*"[^>]*>([\s\S]*?)<\/td>/gi,
+            /<td[^>]*class="[^"]*(?:fondo2|texto|chiste)[^"]*"[^>]*>([\s\S]*?)<\/td>/gi,
           group: 1,
         },
       ],
     },
     {
-      name: 'mejoreschistes.com',
+      // geniol.es — большой каталог испанских анекдотов, WordPress
+      name: 'geniol.es',
       pageUrl: (p) =>
         p === 1
-          ? 'https://www.mejoreschistes.com/chistes/cortos/'
-          : `https://www.mejoreschistes.com/chistes/cortos/page/${p}/`,
-      maxPages: 4,
+          ? 'https://www.geniol.es/humor/chistes/cortos/'
+          : `https://www.geniol.es/humor/chistes/cortos/page/${p}/`,
+      maxPages: 5,
       selectors: [
         {
           pattern:
-            /<div[^>]*class="[^"]*(?:chiste-texto|joke-text|entry-content|the-content)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
+            /<div[^>]*class="[^"]*(?:entry-content|post-content|chiste-content)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
+          group: 1,
+        },
+        {
+          pattern:
+            /<article[^>]*class="[^"]*(?:post|chiste)[^"]*"[^>]*>([\s\S]*?)<\/article>/gi,
           group: 1,
         },
       ],
     },
     {
-      name: 'chistesbuenos.net',
+      // es.chistes.cc — простая структура, много страниц
+      name: 'es.chistes.cc',
       pageUrl: (p) =>
         p === 1
-          ? 'https://www.chistesbuenos.net/chistes-cortos'
-          : `https://www.chistesbuenos.net/chistes-cortos/pagina/${p}`,
-      maxPages: 4,
+          ? 'https://es.chistes.cc/chistes-cortos/'
+          : `https://es.chistes.cc/chistes-cortos/${p}/`,
+      maxPages: 6,
       selectors: [
         {
           pattern:
-            /<div[^>]*class="[^"]*(?:chiste|texto-chiste|contenido|joke)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
-          group: 1,
-        },
-        {
-          pattern: /<p[^>]*class="[^"]*chiste[^"]*"[^>]*>([\s\S]*?)<\/p>/gi,
+            /<div[^>]*class="[^"]*(?:joke|chiste|texto|content-joke)[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
           group: 1,
         },
       ],
