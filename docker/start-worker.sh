@@ -7,4 +7,4 @@ until npx prisma migrate status --schema prisma/schemas >/dev/null 2>&1; do
   sleep 3
 done
 
-exec node dist/worker.js
+exec node dist/src/worker.js

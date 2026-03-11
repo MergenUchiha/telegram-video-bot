@@ -7,4 +7,4 @@ until npx prisma migrate deploy --schema prisma/schemas; do
   sleep 3
 done
 
-exec node dist/main.js
+exec node dist/src/main.js
