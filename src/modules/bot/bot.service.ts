@@ -71,7 +71,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
 
     this.bot = bot;
     this.logger.log('Starting Telegram bot (polling)...');
-    await bot.start();
+    bot.start({
+      onStart: () => this.logger.log('Telegram bot polling started'),
+    });
   }
 
   async onModuleDestroy() {
