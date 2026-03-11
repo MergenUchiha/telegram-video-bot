@@ -30,19 +30,25 @@ export class RateLimitService {
   async check(userId: string): Promise<RateLimitResult> {
     const key = `ratelimit:user:${userId}`;
 
-    const pipeline = this.redis.pipeline();
-    pipeline.incr(key);
-    pipeline.ttl(key);
-    const results = await pipeline.exec();
+    // Atomic INCR + conditional EXPIRE via Lua script
+    const lua = `
+      local count = redis.call("INCR", KEYS[1])
+      local ttl = redis.call("TTL", KEYS[1])
+      if ttl < 0 then
+        redis.call("EXPIRE", KEYS[1], ARGV[1])
+        ttl = tonumber(ARGV[1])
+      end
+      return {count, ttl}
+    `;
+    const result = (await this.redis.eval(
+      lua,
+      1,
+      key,
+      String(this.windowSec),
+    )) as [number, number];
 
-    const count = Number((results?.[0]?.[1] as number) ?? 1);
-    let ttl = Number((results?.[1]?.[1] as number) ?? -1);
-
-    // Устанавливаем TTL только при первом обращении (когда ttl == -1 или -2)
-    if (ttl < 0) {
-      await this.redis.expire(key, this.windowSec);
-      ttl = this.windowSec;
-    }
+    const count = Number(result[0]);
+    const ttl = Number(result[1]);
 
     const allowed = count <= this.maxRequests;
     const remaining = Math.max(0, this.maxRequests - count);

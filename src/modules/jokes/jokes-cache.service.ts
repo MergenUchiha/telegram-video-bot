@@ -70,8 +70,9 @@ export class JokesCacheService {
           return jokes;
         }
       } catch {}
-      // Совсем ничего нет — fallback внутри парсера
-      jokes = await this.parser.fetchJokes();
+      // Совсем ничего нет — возвращаем пустой массив, не повторяем тот же запрос
+      this.logger.error('No jokes from web and no stale cache — pool is empty');
+      return [];
     }
 
     const meta = {

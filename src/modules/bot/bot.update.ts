@@ -899,15 +899,15 @@ export class BotUpdate {
     });
 
     bot.callbackQuery('s:comment', async (ctx) => {
-      await ctx.answerCallbackQuery();
       const { session } = await cbGetSession(ctx);
-      if (!session) return;
+      if (!session) return ctx.answerCallbackQuery({ text: 'Нет сессии. /new' });
       if (!session.sourceVideoKey) {
         return ctx.answerCallbackQuery({
           text: '❌ Сначала загрузи видео',
           show_alert: true,
         });
       }
+      await ctx.answerCallbackQuery();
       const msgId = ctx.callbackQuery?.message?.message_id as number;
       await sendPrompt(
         ctx,

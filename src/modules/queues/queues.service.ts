@@ -67,7 +67,15 @@ export class QueuesService {
     const jobId = payload.sessionId;
 
     const existing = await this.renderQueue.getJob(jobId);
-    if (existing) return existing;
+    if (existing) {
+      const state = await existing.getState();
+      // Only reuse if the job is still pending/active
+      if (state === 'waiting' || state === 'delayed' || state === 'active') {
+        return existing;
+      }
+      // Remove stale completed/failed job so we can re-enqueue
+      await existing.remove().catch(() => {});
+    }
 
     return this.renderQueue.add('render', payload, {
       ...this.defaultRenderJobOptions(),
@@ -127,7 +135,13 @@ export class QueuesService {
   async enqueueAutonomyReconcile(pipelineKey: string) {
     const jobId = `autonomy:reconcile:${pipelineKey}`;
     const existing = await this.autonomyQueue.getJob(jobId);
-    if (existing) return existing;
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'waiting' || state === 'delayed' || state === 'active') {
+        return existing;
+      }
+      await existing.remove().catch(() => {});
+    }
 
     return this.autonomyQueue.add(
       'reconcile',
@@ -171,7 +185,13 @@ export class QueuesService {
   async enqueueYoutubeUpload(payload: YouTubeUploadPayload) {
     const jobId = `youtube-upload:${payload.runId}`;
     const existing = await this.youtubeUploadQueue.getJob(jobId);
-    if (existing) return existing;
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'waiting' || state === 'delayed' || state === 'active') {
+        return existing;
+      }
+      await existing.remove().catch(() => {});
+    }
 
     return this.youtubeUploadQueue.add('youtube-upload', payload, {
       ...this.defaultYoutubeUploadJobOptions(),

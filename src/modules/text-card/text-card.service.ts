@@ -95,18 +95,18 @@ export class TextCardService {
       // Тёмный полупрозрачный фон (60% непрозрачный), белый текст, жирный
       // BorderStyle 3 = opaque box (BackColour как фон прямоугольника)
       default:
-        'Style: JokeCard,Arial,58,&H00FFFFFF,&H000000FF,&H00000000,&H99111111,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1',
+        'Style: JokeCard,DejaVu Sans,58,&H00FFFFFF,&H000000FF,&H00000000,&H99111111,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1',
 
       // Полностью непрозрачный чёрный фон
-      dark: 'Style: JokeCard,Arial,58,&H00FFFFFF,&H000000FF,&H00000000,&HFF000000,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1',
+      dark: 'Style: JokeCard,DejaVu Sans,58,&H00FFFFFF,&H000000FF,&H00000000,&HFF000000,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1',
 
       // Белый фон, чёрный текст
       light:
-        'Style: JokeCard,Arial,58,&H00000000,&H000000FF,&H00FFFFFF,&HCFFFFFFF,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1',
+        'Style: JokeCard,DejaVu Sans,58,&H00000000,&H000000FF,&H00FFFFFF,&HCFFFFFFF,-1,0,0,0,100,100,1,0,3,16,0,5,90,90,0,1',
 
       // Без фона, только текст с обводкой (BorderStyle 1)
       minimal:
-        'Style: JokeCard,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,5,1,5,90,90,0,1',
+        'Style: JokeCard,DejaVu Sans,60,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,5,1,5,90,90,0,1',
     };
 
     return presets[preset] ?? presets['default'];

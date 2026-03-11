@@ -50,11 +50,21 @@ export class TelegramSenderService {
   async sendVideoFile(chatId: string, filePath: string, caption?: string) {
     const url = `${this.apiBase}/bot${this.token}/sendVideo`;
 
-    const buf = await fs.promises.readFile(filePath);
+    const stat = await fs.promises.stat(filePath);
+    // Telegram Bot API limit: 50 MB for sendVideo
+    if (stat.size > 50 * 1024 * 1024) {
+      throw new Error(
+        `Video file too large for Telegram (${Math.round(stat.size / 1024 / 1024)}MB > 50MB limit)`,
+      );
+    }
+
+    const fileStream = fs.createReadStream(filePath);
+    const blob = await new Response(fileStream as any).blob();
+
     const form = new FormData();
     form.set('chat_id', chatId);
     if (caption) form.set('caption', caption);
-    form.set('video', new Blob([buf]), 'out.mp4');
+    form.set('video', blob, 'out.mp4');
 
     const res = await fetch(url, { method: 'POST', body: form as any });
     if (!res.ok) {

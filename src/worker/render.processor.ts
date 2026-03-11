@@ -253,7 +253,7 @@ export class RenderProcessor extends WorkerHost {
     if (overlayEnabled && overlayComment) {
       const fontPath = this.config.get<string>(
         'FONT_PATH',
-        'C:\\Windows\\Fonts\\arial.ttf',
+        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
       );
       const wrapped = this.wrapText(overlayComment.toUpperCase(), 22);
       await fs.promises.writeFile(overlayTextFile, wrapped, 'utf-8');
