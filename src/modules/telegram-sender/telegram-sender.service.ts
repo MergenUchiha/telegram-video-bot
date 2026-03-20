@@ -24,6 +24,7 @@ export class TelegramSenderService {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text }),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!res.ok)
       throw new Error(`sendMessage failed: ${res.status} ${res.statusText}`);
@@ -35,6 +36,7 @@ export class TelegramSenderService {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, video: videoUrl, caption }),
+      signal: AbortSignal.timeout(120_000),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -50,13 +52,21 @@ export class TelegramSenderService {
   async sendVideoFile(chatId: string, filePath: string, caption?: string) {
     const url = `${this.apiBase}/bot${this.token}/sendVideo`;
 
-    const buf = await fs.promises.readFile(filePath);
+    const stat = await fs.promises.stat(filePath);
+    if (stat.size > 50 * 1024 * 1024) {
+      throw new Error(`Video file too large: ${(stat.size / 1024 / 1024).toFixed(1)}MB (max 50MB)`);
+    }
+
     const form = new FormData();
     form.set('chat_id', chatId);
     if (caption) form.set('caption', caption);
-    form.set('video', new Blob([buf]), 'out.mp4');
+    form.set('video', new Blob([await fs.promises.readFile(filePath)]), 'out.mp4');
 
-    const res = await fetch(url, { method: 'POST', body: form as any });
+    const res = await fetch(url, {
+      method: 'POST',
+      body: form as any,
+      signal: AbortSignal.timeout(120_000),
+    });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(

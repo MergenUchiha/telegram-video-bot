@@ -21,7 +21,7 @@ export class EncryptionService {
 
   constructor(private readonly config: ConfigService) {
     const hexKey = this.config.get<string>('ENCRYPTION_KEY', '');
-    if (!hexKey || hexKey.length !== 64) {
+    if (!hexKey || hexKey.length !== 64 || !/^[0-9a-fA-F]{64}$/.test(hexKey)) {
       throw new Error(
         'ENCRYPTION_KEY must be 64 hex characters (32 bytes). ' +
           "Generate with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",

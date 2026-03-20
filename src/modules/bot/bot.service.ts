@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Bot } from 'grammy';
 import { BotUpdate } from './bot.update';
@@ -15,8 +15,9 @@ function formatError(e: unknown): { message: string; stack?: string } {
 }
 
 @Injectable()
-export class BotService implements OnModuleInit {
+export class BotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(BotService.name);
+  private bot: Bot | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -59,7 +60,18 @@ export class BotService implements OnModuleInit {
       );
     }
 
+    this.bot = bot;
     this.logger.log('Starting Telegram bot (polling)...');
-    await bot.start();
+    bot.start({
+      onStart: () => this.logger.log('Telegram bot polling started'),
+    });
+  }
+
+  async onModuleDestroy() {
+    if (this.bot) {
+      this.logger.log('Stopping Telegram bot...');
+      await this.bot.stop();
+      this.bot = null;
+    }
   }
 }

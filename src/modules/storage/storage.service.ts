@@ -138,7 +138,12 @@ export class StorageService {
     contentType = 'application/octet-stream',
   ) {
     const stream = fs.createReadStream(filePath);
-    return this.uploadStream(key, stream, contentType);
+    try {
+      return await this.uploadStream(key, stream, contentType);
+    } catch (e) {
+      stream.destroy();
+      throw e;
+    }
   }
 
   async downloadToFile(key: string, filePath: string) {
@@ -150,10 +155,18 @@ export class StorageService {
       throw new Error('S3 GetObject returned empty body');
     }
     await new Promise<void>((resolve, reject) => {
+      const src = body as Readable;
       const out = fs.createWriteStream(filePath);
-      (body as Readable).pipe(out);
+      src.on('error', (err) => {
+        out.destroy();
+        reject(err);
+      });
+      out.on('error', (err) => {
+        src.destroy();
+        reject(err);
+      });
       out.on('finish', () => resolve());
-      out.on('error', reject);
+      src.pipe(out);
     });
   }
 

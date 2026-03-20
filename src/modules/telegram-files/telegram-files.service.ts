@@ -21,14 +21,14 @@ export class TelegramFilesService {
    */
   async downloadFileStream(fileId: string): Promise<{ stream: Readable; filePath: string }> {
     const getFileUrl = `${this.apiBase}/bot${this.token}/getFile?file_id=${encodeURIComponent(fileId)}`;
-    const metaRes = await fetch(getFileUrl);
+    const metaRes = await fetch(getFileUrl, { signal: AbortSignal.timeout(30_000) });
     if (!metaRes.ok) throw new Error(`Telegram getFile failed: ${metaRes.status} ${metaRes.statusText}`);
     const metaJson = await metaRes.json();
     const filePath: string | undefined = metaJson?.result?.file_path;
     if (!filePath) throw new Error('Telegram getFile: missing result.file_path');
 
     const downloadUrl = `${this.apiBase}/file/bot${this.token}/${filePath}`;
-    const fileRes = await fetch(downloadUrl);
+    const fileRes = await fetch(downloadUrl, { signal: AbortSignal.timeout(120_000) });
     if (!fileRes.ok) throw new Error(`Telegram file download failed: ${fileRes.status} ${fileRes.statusText}`);
 
     // Node18+ fetch body -> ReadableStream, конвертим в Node Readable

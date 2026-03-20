@@ -50,6 +50,6 @@ export class BullBoardAppModule implements NestModule {
         }
         return next();
       })
-      .forRoutes({ path: '/admin/queues*', method: RequestMethod.ALL });
+      .forRoutes({ path: '/admin/queues{*path}', method: RequestMethod.ALL });
   }
 }

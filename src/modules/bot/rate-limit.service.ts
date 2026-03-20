@@ -50,6 +50,15 @@ export class RateLimitService {
     };
   }
 
+  private readonly luaScript = `
+    local count = redis.call('INCR', KEYS[1])
+    if count == 1 then
+      redis.call('EXPIRE', KEYS[1], ARGV[1])
+    end
+    local ttl = redis.call('TTL', KEYS[1])
+    return {count, ttl}
+  `;
+
   async check(
     userId: string,
     action: RateLimitAction = 'command',
@@ -57,23 +66,20 @@ export class RateLimitService {
     const { max, windowSec } = this.limits[action];
     const key = `ratelimit:${action}:${userId}`;
 
-    const pipeline = this.redis.pipeline();
-    pipeline.incr(key);
-    pipeline.ttl(key);
-    const results = await pipeline.exec();
+    const result = (await this.redis.eval(
+      this.luaScript,
+      1,
+      key,
+      windowSec,
+    )) as [number, number];
 
-    const count = Number((results?.[0]?.[1] as number) ?? 1);
-    let ttl = Number((results?.[1]?.[1] as number) ?? -1);
-
-    if (ttl < 0) {
-      await this.redis.expire(key, windowSec);
-      ttl = windowSec;
-    }
+    const count = Number(result[0]);
+    const ttl = Number(result[1]);
 
     return {
       allowed: count <= max,
       remaining: Math.max(0, max - count),
-      resetInSec: ttl,
+      resetInSec: ttl > 0 ? ttl : windowSec,
     };
   }
 }
