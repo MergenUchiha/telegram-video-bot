@@ -7,6 +7,7 @@ import { BackgroundLibraryService } from '../../library/background-library.servi
 import { MusicLibraryService } from '../../library/music-library.service';
 import { JokesCacheService } from '../../jokes/jokes-cache.service';
 import { UsedJokesService } from '../../jokes/used-jokes.service';
+import { YouTubeService } from '../../youtube/youtube.service';
 import { PRESETS } from '../bot.constants';
 import { autoPanelText } from '../panels/index';
 import { autoPanelKeyboard } from '../keyboards/index';
@@ -20,6 +21,7 @@ export class AutoJokesHandler {
     private readonly musicLibrary: MusicLibraryService,
     private readonly jokesCache: JokesCacheService,
     private readonly usedJokes: UsedJokesService,
+    private readonly youtubeService: YouTubeService,
   ) {}
 
   register(bot: Bot): void {
@@ -183,6 +185,26 @@ export class AutoJokesHandler {
       if (!session) return ctx.answerCallbackQuery({ text: 'Нет сессии' });
 
       const enabled = !session.autoPublishYoutube;
+
+      if (enabled) {
+        // Validate that a default channel exists
+        const user = await this.sessions.getOrCreateUser(
+          String(ctx.from?.id),
+          String(ctx.chat?.id),
+        );
+        try {
+          const defaultChannel = await this.youtubeService.getDefault(user.id);
+          if (!defaultChannel) {
+            return ctx.answerCallbackQuery({
+              text: '⚠️ Сначала подключите YouTube-канал через /channels и задайте канал по умолчанию.',
+              show_alert: true,
+            });
+          }
+        } catch {
+          // If check fails, still allow toggling
+        }
+      }
+
       await this.sessions.setAutoPublishYoutube(session.id, enabled);
 
       await this.refreshAutoPanel(ctx, session.id);

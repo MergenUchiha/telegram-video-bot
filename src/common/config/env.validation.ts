@@ -108,6 +108,11 @@ export const envSchema = z.object({
 
   // ── WaitState TTL ─────────────────────────────────────────────────────────
   WAIT_STATE_TTL_SEC: coerceNumber(600),
+
+  // ── YouTube OAuth ─────────────────────────────────────────────────────────
+  YOUTUBE_CLIENT_ID: z.string().min(1, 'YOUTUBE_CLIENT_ID is required'),
+  YOUTUBE_CLIENT_SECRET: z.string().min(1, 'YOUTUBE_CLIENT_SECRET is required'),
+  YOUTUBE_REDIRECT_URI: z.string().default('urn:ietf:wg:oauth:2.0:oob'),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;

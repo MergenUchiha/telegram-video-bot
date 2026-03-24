@@ -1,14 +1,18 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
 import { Queue, JobsOptions } from 'bullmq';
-import { QUEUE_RENDER } from '../redis/redis.constants';
+import { QUEUE_RENDER, QUEUE_YOUTUBE } from '../redis/redis.constants';
 import type { RenderJobPayload } from '../../common/types/render-job.types';
+import type { YouTubeUploadPayload } from '../youtube/youtube.types';
 
-export type { RenderJobPayload };
+export type { RenderJobPayload, YouTubeUploadPayload };
 
 @Injectable()
 export class QueuesService {
-  constructor(@InjectQueue(QUEUE_RENDER) private readonly renderQueue: Queue) {}
+  constructor(
+    @InjectQueue(QUEUE_RENDER) private readonly renderQueue: Queue,
+    @InjectQueue(QUEUE_YOUTUBE) private readonly youtubeQueue: Queue,
+  ) {}
 
   private defaultJobOptions(): JobsOptions {
     return {
@@ -18,6 +22,8 @@ export class QueuesService {
       backoff: { type: 'exponential', delay: 30_000 },
     };
   }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   async enqueueRender(payload: RenderJobPayload) {
     const jobId = payload.sessionId;
@@ -40,5 +46,26 @@ export class QueuesService {
 
   async getRenderJob(sessionId: string) {
     return this.renderQueue.getJob(sessionId);
+  }
+
+  // ── YouTube ─────────────────────────────────────────────────────────────────
+
+  async enqueueYoutubeUpload(payload: YouTubeUploadPayload) {
+    const jobId = `yt-${payload.sessionId}-${payload.channelId}`;
+
+    const existing = await this.youtubeQueue.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'failed' || state === 'completed') {
+        await existing.remove();
+      } else {
+        return existing;
+      }
+    }
+
+    return this.youtubeQueue.add('youtube-upload', payload, {
+      ...this.defaultJobOptions(),
+      jobId,
+    });
   }
 }

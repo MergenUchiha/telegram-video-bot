@@ -7,7 +7,8 @@ export type WaitType =
   | 'language'
   | 'voice'
   | 'speed'
-  | 'duck_level';
+  | 'duck_level'
+  | 'youtube_code';
 
 export interface WaitState {
   type: WaitType;

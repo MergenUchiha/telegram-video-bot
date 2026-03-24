@@ -3,7 +3,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 
 import { buildBullMQOptions } from '../modules/queues/bullmq.config';
-import { QUEUE_RENDER } from '../modules/redis/redis.constants';
+import { QUEUE_RENDER, QUEUE_YOUTUBE } from '../modules/redis/redis.constants';
+import { QueuesModule } from '../modules/queues/queues.module';
 
 import { RedisModule } from '../modules/redis/redis.module';
 import { SessionsModule } from '../modules/sessions/sessions.module';
@@ -18,8 +19,10 @@ import { JokesModule } from '../modules/jokes/jokes.module';
 import { LibraryModule } from '../modules/library/library.module';
 import { TextCardModule } from '../modules/text-card/text-card.module';
 import { EncryptionModule } from '../modules/encryption/encryption.module';
+import { YouTubeModule } from '../modules/youtube/youtube.module';
 
 import { RenderProcessor } from './render.processor';
+import { YouTubeProcessor } from './youtube.processor';
 import { CleanupService } from './cleanup.service';
 import { FfmpegService } from './services/ffmpeg.service';
 import { StandardRenderService } from './services/standard-render.service';
@@ -36,7 +39,8 @@ import { validateEnv } from 'src/common/config/env.validation';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => buildBullMQOptions(config),
     }),
-    BullModule.registerQueue({ name: QUEUE_RENDER }),
+    BullModule.registerQueue({ name: QUEUE_RENDER }, { name: QUEUE_YOUTUBE }),
+    QueuesModule,
     PrismaModule,
     SessionsModule,
     StorageModule,
@@ -50,9 +54,11 @@ import { validateEnv } from 'src/common/config/env.validation';
     LibraryModule,
     TextCardModule,
     EncryptionModule,
+    YouTubeModule,
   ],
   providers: [
     RenderProcessor,
+    YouTubeProcessor,
     CleanupService,
     FfmpegService,
     StandardRenderService,

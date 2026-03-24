@@ -11,6 +11,7 @@ import { StandardSettingsHandler } from './handlers/standard-settings.handler';
 import { AutoJokesHandler } from './handlers/auto-jokes.handler';
 import { TextInputHandler } from './handlers/text-input.handler';
 import { VideoUploadHandler } from './handlers/video-upload.handler';
+import { YouTubeHandler } from './handlers/youtube.handler';
 import { MAIN_MENU_TEXT } from './bot.constants';
 import { autoPanelText, standardPanelText } from './panels/index';
 import {
@@ -32,6 +33,7 @@ export class BotUpdate {
     private readonly autoJokesHandler: AutoJokesHandler,
     private readonly textInputHandler: TextInputHandler,
     private readonly videoUploadHandler: VideoUploadHandler,
+    private readonly youtubeHandler: YouTubeHandler,
   ) {}
 
   register(bot: Bot): void {
@@ -43,6 +45,7 @@ export class BotUpdate {
     this.registerRenderCallback(bot);
 
     this.videoUploadHandler.register(bot);
+    this.youtubeHandler.register(bot);
     this.standardSettingsHandler.register(bot);
     this.autoJokesHandler.register(bot);
     this.textInputHandler.register(bot);
@@ -51,6 +54,7 @@ export class BotUpdate {
   private setCommands(bot: Bot): void {
     void bot.api.setMyCommands([
       { command: 'start', description: '🏠 Главное меню' },
+      { command: 'channels', description: '📺 YouTube-каналы' },
       { command: 'status', description: '📊 Статус рендера' },
     ]);
   }

@@ -7,6 +7,7 @@ import { StandardSettingsHandler } from './handlers/standard-settings.handler';
 import { AutoJokesHandler } from './handlers/auto-jokes.handler';
 import { TextInputHandler } from './handlers/text-input.handler';
 import { VideoUploadHandler } from './handlers/video-upload.handler';
+import { YouTubeHandler } from './handlers/youtube.handler';
 import { RateLimitService } from './rate-limit.service';
 import { SessionsModule } from '../sessions/sessions.module';
 import { StorageModule } from '../storage/storage.module';
@@ -15,6 +16,7 @@ import { QueuesModule } from '../queues/queues.module';
 import { RedisModule } from '../redis/redis.module';
 import { LibraryModule } from '../library/library.module';
 import { JokesModule } from '../jokes/jokes.module';
+import { YouTubeModule } from '../youtube/youtube.module';
 
 @Module({
   imports: [
@@ -25,6 +27,7 @@ import { JokesModule } from '../jokes/jokes.module';
     RedisModule,
     LibraryModule,
     JokesModule,
+    YouTubeModule,
   ],
   providers: [
     // Core
@@ -39,6 +42,7 @@ import { JokesModule } from '../jokes/jokes.module';
     AutoJokesHandler,
     TextInputHandler,
     VideoUploadHandler,
+    YouTubeHandler,
   ],
 })
 export class BotModule {}

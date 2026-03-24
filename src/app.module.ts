@@ -17,6 +17,7 @@ import { TextCardModule } from './modules/text-card/text-card.module';
 import { EncryptionModule } from './modules/encryption/encryption.module';
 import { HealthModule } from './modules/health/health.module';
 import { SessionsModule } from './modules/sessions/sessions.module';
+import { YouTubeModule } from './modules/youtube/youtube.module';
 import { validateEnv } from './common/config/env.validation';
 
 /**
@@ -46,6 +47,7 @@ import { validateEnv } from './common/config/env.validation';
     SubtitlesModule,
     QueuesModule,
     SessionsModule,
+    YouTubeModule,
     // Фичи
     BotModule,
     MetricsModule,

@@ -1,6 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
+import { InlineKeyboard } from 'grammy';
 import { ContentMode, RenderSessionState } from '@prisma/client';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -15,6 +16,8 @@ import { LockService } from '../modules/redis/lock.service';
 import { TelegramSenderService } from '../modules/telegram-sender/telegram-sender.service';
 import { MetricsService } from '../modules/metrics/metrics.service';
 import { UsedJokesService } from '../modules/jokes/used-jokes.service';
+import { QueuesService } from '../modules/queues/queues.service';
+import { YouTubeService } from '../modules/youtube/youtube.service';
 import { FfmpegService } from './services/ffmpeg.service';
 import { StandardRenderService } from './services/standard-render.service';
 import { JokesRenderService } from './services/jokes-render.service';
@@ -37,6 +40,8 @@ export class RenderProcessor extends WorkerHost {
     private readonly tg: TelegramSenderService,
     private readonly metrics: MetricsService,
     private readonly usedJokes: UsedJokesService,
+    private readonly queues: QueuesService,
+    private readonly youtubeService: YouTubeService,
     private readonly ffmpeg: FfmpegService,
     private readonly standardRender: StandardRenderService,
     private readonly jokesRender: JokesRenderService,
@@ -108,7 +113,7 @@ export class RenderProcessor extends WorkerHost {
           );
 
         if (session.autoPublishYoutube) {
-          await this.notifyYoutubeAutoPublish(chatId);
+          await this.handleAutoPublishYoutube(sessionId, userId, chatId);
         }
       } else {
         outputPath = await this.standardRender.render({ session, tmpDir });
@@ -174,11 +179,27 @@ export class RenderProcessor extends WorkerHost {
     await this.sessions.setOutputVideoKey(sessionId, outKey);
     await this.progress.setProgress(sessionId, 90);
 
+    // Кнопка "Загрузить на YouTube" после рендера
+    const uploadKb = new InlineKeyboard().text(
+      '📺 Загрузить на YouTube',
+      'yt:upload_prompt',
+    );
+
     try {
-      await this.tg.sendVideoFile(chatId, outputPath, '✅ Рендер завершён!');
+      await this.tg.sendVideoFile(
+        chatId,
+        outputPath,
+        '✅ Рендер завершён!',
+        uploadKb,
+      );
     } catch {
       const url = await this.storage.presignGetUrl(outKey);
-      await this.tg.sendVideoByUrl(chatId, url, '✅ Рендер завершён! (ссылка)');
+      await this.tg.sendVideoByUrl(
+        chatId,
+        url,
+        '✅ Рендер завершён! (ссылка)',
+        uploadKb,
+      );
     }
 
     await this.sessions.setState(sessionId, RenderSessionState.RENDER_DONE);
@@ -248,12 +269,45 @@ export class RenderProcessor extends WorkerHost {
     }
   }
 
-  private async notifyYoutubeAutoPublish(chatId: string): Promise<void> {
-    await this.tg
-      .sendMessage(
+  private async handleAutoPublishYoutube(
+    sessionId: string,
+    userId: string,
+    chatId: string,
+  ): Promise<void> {
+    try {
+      const defaultChannel = await this.youtubeService.getDefault(userId);
+      if (!defaultChannel) {
+        await this.tg
+          .sendMessage(
+            chatId,
+            '⚠️ Авто-YouTube включён, но канал по умолчанию не задан. Подключите канал через /channels.',
+          )
+          .catch(() => {});
+        return;
+      }
+
+      await this.queues.enqueueYoutubeUpload({
+        sessionId,
+        channelId: defaultChannel.id,
         chatId,
-        '📺 Автопубликация на YouTube будет реализована в следующем обновлении.',
-      )
-      .catch(() => {});
+        userId,
+      });
+
+      await this.tg
+        .sendMessage(
+          chatId,
+          `📺 Автопубликация: загрузка на YouTube (${defaultChannel.channelTitle}) поставлена в очередь.`,
+        )
+        .catch(() => {});
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.logger.warn(`[${sessionId}] Auto-publish YouTube failed: ${msg}`);
+      await this.tg
+        .sendMessage(
+          chatId,
+          `⚠️ Не удалось поставить авто-YouTube в очередь: ${msg.slice(0, 200)}`,
+        )
+        .catch(() => {});
+    }
   }
 }

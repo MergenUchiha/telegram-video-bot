@@ -29,12 +29,23 @@ export class TelegramSenderService {
       throw new Error(`sendMessage failed: ${res.status} ${res.statusText}`);
   }
 
-  async sendVideoByUrl(chatId: string, videoUrl: string, caption?: string) {
+  async sendVideoByUrl(
+    chatId: string,
+    videoUrl: string,
+    caption?: string,
+    replyMarkup?: object,
+  ) {
     const url = `${this.apiBase}/bot${this.token}/sendVideo`;
+    const payload: Record<string, unknown> = {
+      chat_id: chatId,
+      video: videoUrl,
+      caption,
+    };
+    if (replyMarkup) payload.reply_markup = replyMarkup;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, video: videoUrl, caption }),
+      body: JSON.stringify(payload),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
@@ -47,13 +58,19 @@ export class TelegramSenderService {
     }
   }
 
-  async sendVideoFile(chatId: string, filePath: string, caption?: string) {
+  async sendVideoFile(
+    chatId: string,
+    filePath: string,
+    caption?: string,
+    replyMarkup?: object,
+  ) {
     const url = `${this.apiBase}/bot${this.token}/sendVideo`;
 
     const buf = await fs.promises.readFile(filePath);
     const form = new FormData();
     form.set('chat_id', chatId);
     if (caption) form.set('caption', caption);
+    if (replyMarkup) form.set('reply_markup', JSON.stringify(replyMarkup));
     form.set('video', new Blob([buf]), 'out.mp4');
 
     const res = await fetch(url, { method: 'POST', body: form as any });
