@@ -7,7 +7,7 @@ import { WaitStateService } from '../../redis/wait-state/wait-state.service';
 import { AUDIO_POLICIES } from '../bot.constants';
 import { advancedPanelText, standardPanelText } from '../panels/index';
 import { advancedKeyboard, standardPanelKeyboard } from '../keyboards/index';
-import type { WaitType } from '../bot.types';
+import type { BotContext, WaitType } from '../bot.types';
 
 @Injectable()
 export class StandardSettingsHandler {
@@ -229,7 +229,7 @@ export class StandardSettingsHandler {
     });
   }
 
-  private async getSession(ctx: any): Promise<RenderSession | null> {
+  private async getSession(ctx: BotContext): Promise<RenderSession | null> {
     const user = await this.sessions.getOrCreateUser(
       String(ctx.from?.id),
       String(ctx.chat?.id),
@@ -238,7 +238,7 @@ export class StandardSettingsHandler {
   }
 
   private async refreshFreshSession(
-    ctx: any,
+    ctx: BotContext,
     sessionId: string,
   ): Promise<void> {
     const fresh = await this.sessions.getSessionById(sessionId);

@@ -1,7 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
-import { RenderSessionState } from '@prisma/client';
+import { ContentMode, RenderSessionState } from '@prisma/client';
+import type { RenderSession } from '@prisma/client';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -16,6 +17,7 @@ import type {
   YouTubeUploadPayload,
   YouTubeVideoMeta,
 } from '../modules/youtube/youtube.types';
+import { errorMessage } from '../common/errors';
 
 @Processor(QUEUE_YOUTUBE, { concurrency: 1 })
 export class YouTubeProcessor extends WorkerHost {
@@ -106,7 +108,7 @@ export class YouTubeProcessor extends WorkerHost {
 
       this.logger.log(`[${sessionId}] YouTube upload complete: ${link}`);
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof Error ? errorMessage(e) : String(e);
       this.logger.error(`[${sessionId}] YouTube upload failed: ${msg}`);
 
       if (uploadRecord) {
@@ -144,8 +146,8 @@ export class YouTubeProcessor extends WorkerHost {
     }
   }
 
-  private buildVideoMeta(session: any): YouTubeVideoMeta {
-    const isJokes = session.contentMode === 'SPANISH_JOKES_AUTO';
+  private buildVideoMeta(session: RenderSession): YouTubeVideoMeta {
+    const isJokes = session.contentMode === ContentMode.SPANISH_JOKES_AUTO;
 
     let title: string;
     let description: string;

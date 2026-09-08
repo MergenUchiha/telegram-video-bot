@@ -2,6 +2,13 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type IORedis from 'ioredis';
 import { REDIS_CONNECTION } from '../redis/redis.constants';
 import { JokesParserService } from './jokes-parser.service';
+import { errorMessage } from '../../common/errors';
+
+/** What refreshCache writes alongside the pool. */
+interface JokesPoolMeta {
+  count: number;
+  refreshedAt: string;
+}
 
 @Injectable()
 export class JokesCacheService {
@@ -27,8 +34,8 @@ export class JokesCacheService {
         this.logger.debug(`Jokes pool HIT: ${pool.length} jokes`);
         return pool;
       }
-    } catch (e: any) {
-      this.logger.warn(`Pool read error: ${e?.message}`);
+    } catch (e: unknown) {
+      this.logger.warn(`Pool read error: ${errorMessage(e)}`);
     }
     return this.refreshCache();
   }
@@ -39,8 +46,8 @@ export class JokesCacheService {
     let jokes: string[] = [];
     try {
       jokes = await this.parser.fetchJokes();
-    } catch (e: any) {
-      this.logger.warn(`Fetch failed: ${e?.message}`);
+    } catch (e: unknown) {
+      this.logger.warn(`Fetch failed: ${errorMessage(e)}`);
     }
 
     if (jokes.length === 0) {
@@ -53,8 +60,8 @@ export class JokesCacheService {
           );
           return jokes;
         }
-      } catch (e: any) {
-        this.logger.warn(`Could not read the cached pool: ${e?.message}`);
+      } catch (e: unknown) {
+        this.logger.warn(`Could not read the cached pool: ${errorMessage(e)}`);
       }
       jokes = await this.parser.fetchJokes();
     }
@@ -84,15 +91,15 @@ export class JokesCacheService {
     try {
       const metaRaw = await this.redis.get(this.META_KEY);
       if (metaRaw) {
-        const meta = JSON.parse(metaRaw);
+        const meta = JSON.parse(metaRaw) as JokesPoolMeta;
         return {
           cached: true,
           count: meta.count,
           refreshedAt: meta.refreshedAt,
         };
       }
-    } catch (e: any) {
-      this.logger.warn(`Could not read pool metadata: ${e?.message}`);
+    } catch (e: unknown) {
+      this.logger.warn(`Could not read pool metadata: ${errorMessage(e)}`);
     }
     return { cached: false, count: 0, refreshedAt: null };
   }

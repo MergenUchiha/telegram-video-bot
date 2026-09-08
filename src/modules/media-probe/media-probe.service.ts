@@ -10,6 +10,25 @@ export type MediaProbeResult = {
   hasAudio: boolean;
 };
 
+/** The subset of `ffprobe -print_format json` this service reads. */
+interface FfprobeStream {
+  codec_type?: string;
+  width?: number;
+  height?: number;
+  duration?: string;
+  avg_frame_rate?: string;
+  r_frame_rate?: string;
+}
+
+interface FfprobeFormat {
+  duration?: string;
+}
+
+interface FfprobeOutput {
+  streams?: FfprobeStream[];
+  format?: FfprobeFormat;
+}
+
 @Injectable()
 export class MediaProbeService {
   constructor(private readonly config: ConfigService) {}
@@ -32,21 +51,21 @@ export class MediaProbeService {
       filePath,
     ]);
 
-    const data = JSON.parse(stdout);
-    const streams: any[] = data.streams || [];
-    const format: any = data.format || {};
+    const data = JSON.parse(stdout) as FfprobeOutput;
+    const streams = data.streams ?? [];
+    const format = data.format ?? {};
 
     const v = streams.find((s) => s.codec_type === 'video');
     if (!v) throw new Error('ffprobe: no video stream');
 
     const a = streams.find((s) => s.codec_type === 'audio');
 
-    const width = Number(v.width || 0);
-    const height = Number(v.height || 0);
+    const width = Number(v.width ?? 0);
+    const height = Number(v.height ?? 0);
 
-    const durationSec = Number(format.duration || v.duration || 0) || 0;
+    const durationSec = Number(format.duration ?? v.duration ?? 0) || 0;
 
-    const fpsRaw = v.avg_frame_rate || v.r_frame_rate || '0/0';
+    const fpsRaw = v.avg_frame_rate ?? v.r_frame_rate ?? '0/0';
     const fps = this.parseFps(fpsRaw);
 
     return {

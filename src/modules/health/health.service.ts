@@ -3,6 +3,7 @@ import type IORedis from 'ioredis';
 import { REDIS_CONNECTION } from '../redis/redis.constants';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { errorMessage } from '../../common/errors';
 
 export interface ServiceHealth {
   status: 'ok' | 'error';
@@ -54,9 +55,9 @@ export class HealthService {
       const pong = await this.redis.ping();
       if (pong !== 'PONG') throw new Error('Unexpected PING response');
       return { status: 'ok', latencyMs: Date.now() - start };
-    } catch (e: any) {
-      this.logger.warn(`Redis health check failed: ${e.message}`);
-      return { status: 'error', error: e.message };
+    } catch (e: unknown) {
+      this.logger.warn(`Redis health check failed: ${errorMessage(e)}`);
+      return { status: 'error', error: errorMessage(e) };
     }
   }
 
@@ -65,9 +66,9 @@ export class HealthService {
     try {
       await this.prisma.$queryRaw`SELECT 1`;
       return { status: 'ok', latencyMs: Date.now() - start };
-    } catch (e: any) {
-      this.logger.warn(`Database health check failed: ${e.message}`);
-      return { status: 'error', error: e.message };
+    } catch (e: unknown) {
+      this.logger.warn(`Database health check failed: ${errorMessage(e)}`);
+      return { status: 'error', error: errorMessage(e) };
     }
   }
 
@@ -76,9 +77,9 @@ export class HealthService {
     try {
       await this.storage.ensureBucketExists();
       return { status: 'ok', latencyMs: Date.now() - start };
-    } catch (e: any) {
-      this.logger.warn(`Storage health check failed: ${e.message}`);
-      return { status: 'error', error: e.message };
+    } catch (e: unknown) {
+      this.logger.warn(`Storage health check failed: ${errorMessage(e)}`);
+      return { status: 'error', error: errorMessage(e) };
     }
   }
 }

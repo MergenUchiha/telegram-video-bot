@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { execa } from 'execa';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { errorMessage } from '../../common/errors';
 
 @Injectable()
 export class FfmpegService {
@@ -51,11 +52,12 @@ export class FfmpegService {
       });
       if (res.all) this.logger.debug(res.all);
     } catch (e: unknown) {
-      const err = e as any;
-      const all = err?.all ? String(err.all) : '';
-      const merged = all?.trim()
-        ? `${err?.message}\n\nffmpeg output:\n${this.clip(all, 2400)}`
-        : String(err?.message);
+      // execa attaches the merged stdout/stderr of the failed process to the
+      // error; it is the only useful part of an ffmpeg failure.
+      const all = hasCombinedOutput(e) ? e.all : '';
+      const merged = all.trim()
+        ? `${errorMessage(e)}\n\nffmpeg output:\n${this.clip(all, 2400)}`
+        : errorMessage(e);
       this.logger.error(this.clip(merged, 2400));
       throw new Error(this.clip(merged, 2400), { cause: e });
     }
@@ -144,4 +146,14 @@ export class FfmpegService {
     if (line) lines.push(line);
     return lines.join('\n');
   }
+}
+
+/** execa attaches the merged stdout/stderr of a failed process to the error. */
+function hasCombinedOutput(error: unknown): error is { all: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'all' in error &&
+    typeof error.all === 'string'
+  );
 }

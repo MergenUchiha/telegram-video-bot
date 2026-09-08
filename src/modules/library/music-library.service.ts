@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { StorageService } from '../storage/storage.service';
 import * as path from 'node:path';
+import type { Readable } from 'node:stream';
 
 export const LIBRARY_MUSIC_PREFIX = 'library/music/';
 
@@ -42,14 +43,14 @@ export class MusicLibraryService {
   }
 
   async uploadTrack(
-    stream: NodeJS.ReadableStream,
+    stream: Readable,
     filename: string,
     fileSize?: number,
   ): Promise<string> {
     const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128);
     const key = `${LIBRARY_MUSIC_PREFIX}${Date.now()}_${safe}`;
     await this.storage.ensureBucketExists();
-    await this.storage.uploadStream(key, stream as any, 'audio/mpeg', fileSize);
+    await this.storage.uploadStream(key, stream, 'audio/mpeg', fileSize);
     this.logger.log(`Track uploaded to library: ${key}`);
     return key;
   }

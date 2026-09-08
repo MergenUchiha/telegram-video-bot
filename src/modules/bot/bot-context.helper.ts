@@ -5,17 +5,18 @@ import { ContentMode } from '@prisma/client';
 import { SessionsService } from '../sessions/sessions.service';
 import { standardPanelText, autoPanelText } from './panels/index';
 import { standardPanelKeyboard, autoPanelKeyboard } from './keyboards/index';
+import type { BotContext } from './bot.types';
 
 @Injectable()
 export class BotContextHelper {
   constructor(private readonly sessions: SessionsService) {}
 
-  getChatId(ctx: any): string {
+  getChatId(ctx: BotContext): string {
     return String(ctx.chat?.id ?? ctx.from?.id);
   }
 
   async tryDeleteMessage(
-    ctx: any,
+    ctx: BotContext,
     msgId: number | null | undefined,
   ): Promise<void> {
     if (!msgId) return;
@@ -27,7 +28,7 @@ export class BotContextHelper {
   }
 
   async editPanel(
-    ctx: any,
+    ctx: BotContext,
     msgId: number,
     text: string,
     kb: InlineKeyboard,
@@ -48,7 +49,7 @@ export class BotContextHelper {
   }
 
   async sendPanel(
-    ctx: any,
+    ctx: BotContext,
     sessionId: string | null,
     text: string,
     kb: InlineKeyboard,
@@ -64,7 +65,7 @@ export class BotContextHelper {
   }
 
   async refreshSessionPanel(
-    ctx: any,
+    ctx: BotContext,
     session: RenderSession,
     panelMsgId?: number,
   ): Promise<void> {
@@ -83,7 +84,7 @@ export class BotContextHelper {
     }
   }
 
-  async getUser(ctx: any, sessionsService: SessionsService) {
+  async getUser(ctx: BotContext, sessionsService: SessionsService) {
     return sessionsService.getOrCreateUser(
       String(ctx.from?.id),
       String(ctx.chat?.id),

@@ -1,11 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Bot, InlineKeyboard } from 'grammy';
-import type { RenderSession } from '@prisma/client';
+import type { RenderSession, YoutubeChannel } from '@prisma/client';
 import { SessionsService } from '../../sessions/sessions.service';
 import { BotContextHelper } from '../bot-context.helper';
 import { WaitStateService } from '../../redis/wait-state/wait-state.service';
 import { QueuesService } from '../../queues/queues.service';
 import { YouTubeService } from '../../youtube/youtube.service';
+import { errorMessage } from '../../../common/errors';
+import type { BotContext } from '../bot.types';
 
 @Injectable()
 export class YouTubeHandler {
@@ -275,7 +277,7 @@ export class YouTubeHandler {
           this.buildChannelListKeyboard(channels),
         );
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = e instanceof Error ? errorMessage(e) : String(e);
         await this.helper.editPanel(
           ctx,
           panelMsgId,
@@ -301,7 +303,7 @@ export class YouTubeHandler {
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   private async enqueueUpload(
-    ctx: any,
+    ctx: BotContext,
     session: RenderSession,
     channelId: string,
     userId: string,
@@ -341,7 +343,7 @@ export class YouTubeHandler {
     }
   }
 
-  private buildChannelListText(channels: any[]): string {
+  private buildChannelListText(channels: YoutubeChannel[]): string {
     if (!channels.length) {
       return (
         '📺 <b>YouTube-каналы</b>\n\n' +
@@ -358,7 +360,7 @@ export class YouTubeHandler {
     return '📺 <b>YouTube-каналы</b>\n\n' + lines.join('\n');
   }
 
-  private buildChannelListKeyboard(channels: any[]): InlineKeyboard {
+  private buildChannelListKeyboard(channels: YoutubeChannel[]): InlineKeyboard {
     const kb = new InlineKeyboard();
 
     for (const ch of channels) {

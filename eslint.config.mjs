@@ -26,19 +26,7 @@ export default tseslint.config(
   },
   {
     rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-floating-promises': 'warn',
-
-      // The no-unsafe-* family fires on values that arrive untyped from
-      // outside: grammY's ctx.callbackQuery/message payloads, axios response
-      // bodies, and ioredis replies. Turning them on means declaring a type at
-      // every one of those boundaries — worth doing, but as its own pass
-      // rather than mixed into unrelated changes. Everything else is an error.
-      '@typescript-eslint/no-unsafe-argument': 'off',
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-call': 'off',
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-return': 'off',
     },
   },
 );

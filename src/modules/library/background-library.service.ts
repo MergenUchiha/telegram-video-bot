@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { StorageService } from '../storage/storage.service';
 import * as path from 'node:path';
+import type { Readable } from 'node:stream';
 
 export const LIBRARY_VIDEOS_PREFIX = 'library/backgrounds/';
 
@@ -42,14 +43,14 @@ export class BackgroundLibraryService {
   }
 
   async uploadVideo(
-    stream: NodeJS.ReadableStream,
+    stream: Readable,
     filename: string,
     fileSize?: number,
   ): Promise<string> {
     const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128);
     const key = `${LIBRARY_VIDEOS_PREFIX}${Date.now()}_${safe}`;
     await this.storage.ensureBucketExists();
-    await this.storage.uploadStream(key, stream as any, 'video/mp4', fileSize);
+    await this.storage.uploadStream(key, stream, 'video/mp4', fileSize);
     this.logger.log(`Video uploaded to library: ${key}`);
     return key;
   }

@@ -4,6 +4,20 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { errorMessage } from '../../common/errors';
+
+/** Body of Kokoro's OpenAI-compatible /audio/speech endpoint. */
+interface KokoroSpeechRequest {
+  model: string;
+  input: string;
+  voice: string;
+  response_format: string;
+  speed: number;
+  stream: boolean;
+  return_download_link: boolean;
+  /** Only sent for languages the model actually supports. */
+  lang_code?: string;
+}
 
 export type TtsRequest = {
   text: string;
@@ -175,7 +189,7 @@ export class TtsService {
       );
     }
 
-    const payload: any = {
+    const payload: KokoroSpeechRequest = {
       model: this.model(),
       input: text,
       voice,
@@ -187,7 +201,7 @@ export class TtsService {
       ...(langCode ? { lang_code: langCode } : {}),
     };
 
-    let lastErr: any;
+    let lastErr: unknown;
 
     for (const ep of endpoints) {
       try {
@@ -232,7 +246,7 @@ export class TtsService {
 
     throw new Error(
       `Kokoro TTS request failed (tried ${endpoints.join(', ')}). ` +
-        `Check KOKORO_BASE_URL and KOKORO_API_PATH. Last error: ${lastErr?.message || String(lastErr)}`,
+        `Check KOKORO_BASE_URL and KOKORO_API_PATH. Last error: ${errorMessage(lastErr)}`,
     );
   }
 }

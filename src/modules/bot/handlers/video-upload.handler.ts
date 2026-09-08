@@ -10,6 +10,9 @@ import { WaitStateService } from '../../redis/wait-state/wait-state.service';
 import { RateLimitService } from '../rate-limit.service';
 import { standardPanelText } from '../panels/index';
 import { standardPanelKeyboard } from '../keyboards/index';
+import { errorMessage } from '../../../common/errors';
+import type { RenderSession } from '@prisma/client';
+import type { FilteredContext } from '../bot.types';
 
 const MAX_VIDEO_SIZE_BYTES = 200 * 1024 * 1024; // 200 MB
 
@@ -85,8 +88,11 @@ export class VideoUploadHandler {
     });
   }
 
-  private async handleVideoUpload(ctx: any, session: any): Promise<void> {
-    const panelMsgId = session.lastBotMessageId as number | null;
+  private async handleVideoUpload(
+    ctx: FilteredContext<'message:video'>,
+    session: RenderSession,
+  ): Promise<void> {
+    const panelMsgId = session.lastBotMessageId;
 
     if (panelMsgId) {
       await this.helper.editPanel(
@@ -136,7 +142,7 @@ export class VideoUploadHandler {
         await this.helper.sendPanel(ctx, session.id, text, kb);
       }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof Error ? errorMessage(e) : String(e);
       const errText = `❌ <b>Ошибка загрузки видео</b>\n\n${msg.slice(0, 400)}`;
 
       if (panelMsgId) {

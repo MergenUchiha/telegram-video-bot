@@ -108,7 +108,7 @@ export class SessionsService {
   ): Promise<RenderSession> {
     return this.prisma.renderSession.update({
       where: { id: sessionId },
-      data: data as any,
+      data,
     });
   }
 

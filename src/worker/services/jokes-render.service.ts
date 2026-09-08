@@ -11,6 +11,7 @@ import { MusicLibraryService } from '../../modules/library/music-library.service
 import { JokesCacheService } from '../../modules/jokes/jokes-cache.service';
 import { UsedJokesService } from '../../modules/jokes/used-jokes.service';
 import { SessionsService } from '../../modules/sessions/sessions.service';
+import { PRESETS } from '../../modules/bot/bot.constants';
 
 export interface JokesRenderOptions {
   session: RenderSession;
@@ -78,7 +79,8 @@ export class JokesRenderService {
     });
     await this.progress.setProgress(sessionId, 50);
 
-    const preset = (session.textCardPreset as any) ?? 'default';
+    const preset =
+      PRESETS.find((p) => p === session.textCardPreset) ?? 'default';
     await this.textCard.makeJokeCard(
       paths.cardAss,
       jokeText,

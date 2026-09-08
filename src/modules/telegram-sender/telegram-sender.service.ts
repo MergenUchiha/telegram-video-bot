@@ -73,7 +73,7 @@ export class TelegramSenderService {
     if (replyMarkup) form.set('reply_markup', JSON.stringify(replyMarkup));
     form.set('video', new Blob([buf]), 'out.mp4');
 
-    const res = await fetch(url, { method: 'POST', body: form as any });
+    const res = await fetch(url, { method: 'POST', body: form });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(

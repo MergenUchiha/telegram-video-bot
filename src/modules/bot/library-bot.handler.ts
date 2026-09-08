@@ -6,6 +6,8 @@ import { LibraryAdminService } from '../library/library-admin.service';
 import { BackgroundLibraryService } from '../library/background-library.service';
 import { MusicLibraryService } from '../library/music-library.service';
 import { TelegramFilesService } from '../telegram-files/telegram-files.service';
+import { errorMessage } from '../../common/errors';
+import type { BotContext } from './bot.types';
 
 type UploadMode = 'video' | 'music';
 
@@ -276,7 +278,7 @@ export class LibraryBotHandler {
   }
 
   private async handleUpload(
-    ctx: any,
+    ctx: BotContext,
     mode: UploadMode,
     fileId: string,
     filename: string,
@@ -306,16 +308,16 @@ export class LibraryBotHandler {
         uploadMsg.message_id,
         `✅ ${emoji} Файл добавлен!\n\n📁 ${name}\n${label}: ${total} файлов`,
       );
-    } catch (e: any) {
-      this.logger.error(`Library ${mode} upload failed: ${e?.message}`);
+    } catch (e: unknown) {
+      this.logger.error(`Library ${mode} upload failed: ${errorMessage(e)}`);
       try {
         await ctx.api.editMessageText(
           String(ctx.chat?.id),
           uploadMsg.message_id,
-          `❌ Ошибка загрузки: ${String(e?.message).slice(0, 300)}`,
+          `❌ Ошибка загрузки: ${String(errorMessage(e)).slice(0, 300)}`,
         );
       } catch {
-        await ctx.reply(`❌ Ошибка: ${String(e?.message).slice(0, 300)}`);
+        await ctx.reply(`❌ Ошибка: ${String(errorMessage(e)).slice(0, 300)}`);
       }
     }
   }

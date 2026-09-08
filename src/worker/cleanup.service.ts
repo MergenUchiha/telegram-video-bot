@@ -4,6 +4,7 @@ import { StorageService } from '../modules/storage/storage.service';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { errorMessage } from '../common/errors';
 
 @Injectable()
 export class CleanupService implements OnModuleInit {
@@ -16,10 +17,10 @@ export class CleanupService implements OnModuleInit {
 
   onModuleInit() {
     this.cleanupStaleTmpDirs().catch((e) =>
-      this.logger.warn(`tmp cleanup failed: ${e?.message}`),
+      this.logger.warn(`tmp cleanup failed: ${errorMessage(e)}`),
     );
     this.ensureS3Lifecycle().catch((e) =>
-      this.logger.warn(`S3 lifecycle setup failed: ${e?.message}`),
+      this.logger.warn(`S3 lifecycle setup failed: ${errorMessage(e)}`),
     );
   }
 
@@ -82,8 +83,8 @@ export class CleanupService implements OnModuleInit {
       this.logger.log(
         `S3 lifecycle set: inputs→${inputDays}d, outputs→${outputDays}d`,
       );
-    } catch (e: any) {
-      this.logger.warn(`S3 lifecycle setup skipped: ${e?.message}`);
+    } catch (e: unknown) {
+      this.logger.warn(`S3 lifecycle setup skipped: ${errorMessage(e)}`);
     }
   }
 }

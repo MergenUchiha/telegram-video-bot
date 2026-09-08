@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { errorMessage } from '../../common/errors';
 
 interface JokeSource {
   name: string;
@@ -9,6 +10,15 @@ interface JokeSource {
 }
 
 const RETRY_DELAYS_MS = [1000, 3000, 7000]; // 3 попытки с экспоненциальным backoff
+
+/** Ошибки, которые имеет смысл повторить: троттлинг и обрывы связи. */
+const RETRYABLE_MARKERS = [
+  '429',
+  '503',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'fetch',
+] as const;
 
 @Injectable()
 export class JokesParserService {
@@ -221,9 +231,7 @@ export class JokesParserService {
           this.logger.log(`✅ ${batch[i].name}: ${r.value.length} jokes`);
           allJokes.push(...r.value);
         } else {
-          this.logger.warn(
-            `❌ ${batch[i].name}: ${r.reason?.message ?? r.reason}`,
-          );
+          this.logger.warn(`❌ ${batch[i].name}: ${errorMessage(r.reason)}`);
         }
       }
 
@@ -272,8 +280,8 @@ export class JokesParserService {
 
         // Небольшая пауза между страницами одного источника
         if (page < limit) await this.sleep(300);
-      } catch (e: any) {
-        this.logger.warn(`${source.name} p${page} error: ${e?.message}`);
+      } catch (e: unknown) {
+        this.logger.warn(`${source.name} p${page} error: ${errorMessage(e)}`);
         break;
       }
     }
@@ -290,32 +298,32 @@ export class JokesParserService {
       this.config.get<string>('JOKES_FETCH_TIMEOUT_MS', '10000'),
     );
 
-    let lastErr: Error | null = null;
+    let lastErr: unknown = null;
 
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       try {
         const html = await this.fetchHtml(url, timeout);
         return html;
-      } catch (e: any) {
+      } catch (e: unknown) {
         lastErr = e;
-        const isRetryable =
-          e?.message?.includes('429') ||
-          e?.message?.includes('503') ||
-          e?.message?.includes('ECONNRESET') ||
-          e?.message?.includes('ETIMEDOUT') ||
-          e?.message?.includes('fetch');
+        const message = errorMessage(e);
+        const isRetryable = RETRYABLE_MARKERS.some((marker) =>
+          message.includes(marker),
+        );
 
         if (!isRetryable || attempt >= RETRY_DELAYS_MS.length) break;
 
         const delay = RETRY_DELAYS_MS[attempt];
         this.logger.warn(
-          `${url} failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${e.message}`,
+          `${url} failed (attempt ${attempt + 1}), retrying in ${delay}ms: ${errorMessage(e)}`,
         );
         await this.sleep(delay);
       }
     }
 
-    throw lastErr ?? new Error(`Failed to fetch ${url}`);
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error(`Failed to fetch ${url}: ${errorMessage(lastErr)}`);
   }
 
   private async fetchHtml(url: string, timeout: number): Promise<string> {

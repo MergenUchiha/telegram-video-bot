@@ -11,6 +11,8 @@ import { YouTubeService } from '../../youtube/youtube.service';
 import { PRESETS } from '../bot.constants';
 import { autoPanelText } from '../panels/index';
 import { autoPanelKeyboard } from '../keyboards/index';
+import { errorMessage } from '../../../common/errors';
+import type { BotContext } from '../bot.types';
 
 @Injectable()
 export class AutoJokesHandler {
@@ -172,7 +174,7 @@ export class AutoJokesHandler {
       if (!session) return ctx.answerCallbackQuery({ text: 'Нет сессии' });
 
       const cur = session.textCardPreset ?? 'default';
-      const idx = PRESETS.indexOf(cur as any);
+      const idx = PRESETS.findIndex((p) => p === cur);
       const next = PRESETS[(idx + 1) % PRESETS.length];
       await this.sessions.setTextCardPreset(session.id, next);
 
@@ -312,7 +314,7 @@ export class AutoJokesHandler {
           new InlineKeyboard().text('← Назад к настройкам', 'auto:pick_back'),
         );
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = e instanceof Error ? errorMessage(e) : String(e);
         await this.helper.editPanel(
           ctx,
           msgId,
@@ -323,7 +325,7 @@ export class AutoJokesHandler {
     });
   }
 
-  private async getSession(ctx: any): Promise<RenderSession | null> {
+  private async getSession(ctx: BotContext): Promise<RenderSession | null> {
     const user = await this.sessions.getOrCreateUser(
       String(ctx.from?.id),
       String(ctx.chat?.id),
@@ -331,7 +333,10 @@ export class AutoJokesHandler {
     return this.sessions.getActiveSession(user.id);
   }
 
-  private async refreshAutoPanel(ctx: any, sessionId: string): Promise<void> {
+  private async refreshAutoPanel(
+    ctx: BotContext,
+    sessionId: string,
+  ): Promise<void> {
     const fresh = await this.sessions.getSessionById(sessionId);
     if (!fresh) return;
     const msgId = ctx.callbackQuery?.message?.message_id as number;
@@ -343,7 +348,7 @@ export class AutoJokesHandler {
     );
   }
 
-  private async refreshCurrentSession(ctx: any): Promise<void> {
+  private async refreshCurrentSession(ctx: BotContext): Promise<void> {
     const session = await this.getSession(ctx);
     if (!session) return;
     const fresh = await this.sessions.getSessionById(session.id);

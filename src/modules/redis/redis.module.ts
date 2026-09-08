@@ -8,22 +8,41 @@ import { RedisService } from './redis.service';
 import { LockService } from './lock.service';
 import { ProgressService } from './progress.service';
 import { WaitStateService } from './wait-state/wait-state.service';
+import { errorMessage, hasErrorCode } from '../../common/errors';
 
-function formatRedisError(err: any): string {
-  const isAgg = err && typeof err === 'object' && Array.isArray(err.errors);
-  if (!isAgg) {
-    const code = err?.code ? ` code=${err.code}` : '';
-    const msg = err?.message || String(err);
-    return `${msg}${code}`;
+/**
+ * ioredis reports a failed multi-address connect as an AggregateError whose
+ * `errors` carry the address that was tried, which is the useful part.
+ */
+interface ConnectAttemptError {
+  message?: string;
+  code?: string;
+  address?: string;
+  port?: number;
+}
+
+function isAggregate(err: unknown): err is { errors: ConnectAttemptError[] } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'errors' in err &&
+    Array.isArray(err.errors)
+  );
+}
+
+function describeAttempt(e: ConnectAttemptError): string {
+  const addr = e.address ? ` @ ${e.address}:${e.port ?? ''}` : '';
+  const code = e.code ? ` (${e.code})` : '';
+  return `- ${e.message ?? 'Unknown error'}${code}${addr}`;
+}
+
+function formatRedisError(err: unknown): string {
+  if (!isAggregate(err)) {
+    const code = hasErrorCode(err) ? ` code=${err.code}` : '';
+    return `${errorMessage(err)}${code}`;
   }
 
-  const lines = err.errors.map((e: any) => {
-    const addr = e?.address ? `${e.address}:${e.port}` : '';
-    const code = e?.code ? ` (${e.code})` : '';
-    const msg = e?.message || 'Unknown error';
-    return `- ${msg}${code}${addr ? ` @ ${addr}` : ''}`;
-  });
-
+  const lines = err.errors.map(describeAttempt);
   return `Redis connection failed (multiple attempts):\n${lines.join('\n')}`;
 }
 
@@ -40,7 +59,7 @@ function formatRedisError(err: any): string {
 
         client.on('connect', () => logger.log('connecting...'));
         client.on('ready', () => logger.log('ready'));
-        client.on('reconnecting', (delay) =>
+        client.on('reconnecting', (delay: number) =>
           logger.warn(`reconnecting in ${delay}ms...`),
         );
         client.on('close', () => logger.warn('connection closed'));

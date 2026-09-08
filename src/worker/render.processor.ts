@@ -21,6 +21,8 @@ import { YouTubeService } from '../modules/youtube/youtube.service';
 import { FfmpegService } from './services/ffmpeg.service';
 import { StandardRenderService } from './services/standard-render.service';
 import { JokesRenderService } from './services/jokes-render.service';
+import { errorMessage } from '../common/errors';
+import type { SessionState } from '../modules/redis/redis.constants';
 
 export interface RenderJobPayload {
   sessionId: string;
@@ -75,8 +77,8 @@ export class RenderProcessor extends WorkerHost {
           if (!ok)
             this.logger.warn(`Lock lost mid-render for session ${sessionId}`);
         })
-        .catch((e: any) =>
-          this.logger.warn(`Lock refresh failed: ${e?.message}`),
+        .catch((e: unknown) =>
+          this.logger.warn(`Lock refresh failed: ${errorMessage(e)}`),
         );
     }, 60_000);
 
@@ -115,7 +117,9 @@ export class RenderProcessor extends WorkerHost {
         await this.usedJokes
           .markUsed(userId, result.jokeText)
           .catch((e: Error) =>
-            this.logger.warn(`[${sessionId}] markUsed failed: ${e.message}`),
+            this.logger.warn(
+              `[${sessionId}] markUsed failed: ${errorMessage(e)}`,
+            ),
           );
 
         if (session.autoPublishYoutube) {
@@ -229,7 +233,7 @@ export class RenderProcessor extends WorkerHost {
     startedAt: Date,
   ): Promise<void> {
     const msg = this.ffmpeg.clip(
-      e instanceof Error ? e.message : String(e),
+      e instanceof Error ? errorMessage(e) : String(e),
       1600,
     );
     const finishedAt = new Date();
@@ -263,10 +267,10 @@ export class RenderProcessor extends WorkerHost {
     sessionId: string,
     progress?: number,
     message?: string,
-    state: string = 'RENDERING',
+    state: SessionState = 'RENDERING',
   ): Promise<void> {
     await this.progress.setStatus(sessionId, {
-      state: state as any,
+      state,
       updatedAt: new Date().toISOString(),
       message,
     });
@@ -306,7 +310,7 @@ export class RenderProcessor extends WorkerHost {
         )
         .catch(() => {});
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = e instanceof Error ? errorMessage(e) : String(e);
       this.logger.warn(`[${sessionId}] Auto-publish YouTube failed: ${msg}`);
       await this.tg
         .sendMessage(

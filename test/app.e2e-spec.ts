@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import type { Server } from 'node:http';
 import * as request from 'supertest';
 import { HealthController } from '../src/modules/health/health.controller';
 import {
@@ -17,6 +18,9 @@ import {
  */
 describe('HealthController (e2e)', () => {
   let app: INestApplication;
+  // getHttpServer() is typed as any; naming the server type keeps supertest's
+  // own typing intact instead of spreading any through every request.
+  const server = () => app.getHttpServer() as Server;
 
   const healthy: HealthStatus = {
     status: 'ok',
@@ -49,7 +53,7 @@ describe('HealthController (e2e)', () => {
   });
 
   it('GET /health/live answers without touching any dependency', async () => {
-    await request(app.getHttpServer())
+    await request(server())
       .get('/health/live')
       .expect(200)
       .expect({ status: 'ok' });
@@ -58,10 +62,11 @@ describe('HealthController (e2e)', () => {
   });
 
   it('GET /health reports every dependency', async () => {
-    const res = await request(app.getHttpServer()).get('/health').expect(200);
+    const res = await request(server()).get('/health').expect(200);
+    const body = res.body as HealthStatus;
 
-    expect(res.body.status).toBe('ok');
-    expect(Object.keys(res.body.services).sort()).toEqual([
+    expect(body.status).toBe('ok');
+    expect(Object.keys(body.services).sort()).toEqual([
       'database',
       'redis',
       'storage',
@@ -69,7 +74,7 @@ describe('HealthController (e2e)', () => {
   });
 
   it('GET /health/ready is ready only while every dependency is ok', async () => {
-    await request(app.getHttpServer())
+    await request(server())
       .get('/health/ready')
       .expect(200)
       .expect({ status: 'ready' });
@@ -83,7 +88,7 @@ describe('HealthController (e2e)', () => {
       },
     });
 
-    await request(app.getHttpServer())
+    await request(server())
       .get('/health/ready')
       .expect(200)
       .expect({ status: 'not_ready' });

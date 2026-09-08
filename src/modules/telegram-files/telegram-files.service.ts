@@ -2,6 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Readable } from 'stream';
 
+/** The part of Telegram's getFile response this service reads. */
+interface TelegramGetFileResponse {
+  result?: { file_path?: string };
+}
+
 @Injectable()
 export class TelegramFilesService {
   private readonly token: string;
@@ -31,8 +36,8 @@ export class TelegramFilesService {
       throw new Error(
         `Telegram getFile failed: ${metaRes.status} ${metaRes.statusText}`,
       );
-    const metaJson = await metaRes.json();
-    const filePath: string | undefined = metaJson?.result?.file_path;
+    const metaJson = (await metaRes.json()) as TelegramGetFileResponse;
+    const filePath = metaJson.result?.file_path;
     if (!filePath)
       throw new Error('Telegram getFile: missing result.file_path');
 
@@ -43,8 +48,12 @@ export class TelegramFilesService {
         `Telegram file download failed: ${fileRes.status} ${fileRes.statusText}`,
       );
 
+    if (!fileRes.body) throw new Error('Telegram file download: empty body');
+
     // Node18+ fetch body -> ReadableStream, конвертим в Node Readable
-    const nodeStream = Readable.fromWeb(fileRes.body as any);
+    const nodeStream = Readable.fromWeb(
+      fileRes.body as Parameters<typeof Readable.fromWeb>[0],
+    );
     return { stream: nodeStream, filePath };
   }
 }

@@ -146,7 +146,7 @@ export class StorageService {
       new GetObjectCommand({ Bucket: this.bucket, Key: key }),
     );
     const body = res.Body;
-    if (!body || typeof (body as any).pipe !== 'function') {
+    if (!(body instanceof Readable)) {
       throw new Error('S3 GetObject returned empty body');
     }
     await new Promise<void>((resolve, reject) => {

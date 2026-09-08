@@ -3,6 +3,7 @@ import type IORedis from 'ioredis';
 import { ConfigService } from '@nestjs/config';
 import { REDIS_CONNECTION } from '../redis.constants';
 import type { WaitState } from '../../bot/bot.types';
+import { errorMessage } from '../../../common/errors';
 
 /**
  * Хранит состояние ожидания текстового ввода в Redis.
@@ -34,8 +35,10 @@ export class WaitStateService {
         'EX',
         this.ttlSec,
       );
-    } catch (e: any) {
-      this.logger.error(`WaitState set failed for ${sessionId}: ${e.message}`);
+    } catch (e: unknown) {
+      this.logger.error(
+        `WaitState set failed for ${sessionId}: ${errorMessage(e)}`,
+      );
     }
   }
 
@@ -44,8 +47,10 @@ export class WaitStateService {
       const raw = await this.redis.get(this.key(sessionId));
       if (!raw) return undefined;
       return JSON.parse(raw) as WaitState;
-    } catch (e: any) {
-      this.logger.warn(`WaitState get failed for ${sessionId}: ${e.message}`);
+    } catch (e: unknown) {
+      this.logger.warn(
+        `WaitState get failed for ${sessionId}: ${errorMessage(e)}`,
+      );
       return undefined;
     }
   }
@@ -53,9 +58,9 @@ export class WaitStateService {
   async delete(sessionId: string): Promise<void> {
     try {
       await this.redis.del(this.key(sessionId));
-    } catch (e: any) {
+    } catch (e: unknown) {
       this.logger.warn(
-        `WaitState delete failed for ${sessionId}: ${e.message}`,
+        `WaitState delete failed for ${sessionId}: ${errorMessage(e)}`,
       );
     }
   }

@@ -14,6 +14,7 @@ import { VideoUploadHandler } from './handlers/video-upload.handler';
 import { YouTubeHandler } from './handlers/youtube.handler';
 import { MAIN_MENU_TEXT } from './bot.constants';
 import { autoPanelText, standardPanelText } from './panels/index';
+import type { BotContext } from './bot.types';
 import {
   autoPanelKeyboard,
   mainMenuKeyboard,
@@ -315,7 +316,7 @@ export class BotUpdate {
     });
   }
 
-  private async showMainMenu(ctx: any): Promise<void> {
+  private async showMainMenu(ctx: BotContext): Promise<void> {
     const user = await this.sessions.getOrCreateUser(
       String(ctx.from?.id),
       String(ctx.chat?.id),
