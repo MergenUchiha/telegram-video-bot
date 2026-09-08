@@ -4,7 +4,7 @@ import type { RenderSession } from '@prisma/client';
 import { SessionsService } from '../../sessions/sessions.service';
 import { BotContextHelper } from '../bot-context.helper';
 import { WaitStateService } from '../../redis/wait-state/wait-state.service';
-import { AUDIO_POLICIES, AudioPolicy } from '../bot.constants';
+import { AUDIO_POLICIES } from '../bot.constants';
 import { advancedPanelText, standardPanelText } from '../panels/index';
 import { advancedKeyboard, standardPanelKeyboard } from '../keyboards/index';
 import type { WaitType } from '../bot.types';
@@ -66,10 +66,7 @@ export class StandardSettingsHandler {
         const session = await this.getSession(ctx);
         if (!session) return ctx.answerCallbackQuery({ text: 'Нет сессии' });
 
-        await this.sessions.setOriginalAudioPolicy(
-          session.id,
-          policy as AudioPolicy,
-        );
+        await this.sessions.setOriginalAudioPolicy(session.id, policy);
         await this.refreshFreshSession(ctx, session.id);
         await ctx.answerCallbackQuery(`Звук: ${policy}`).catch(() => {});
       });
@@ -226,7 +223,9 @@ export class StandardSettingsHandler {
       await this.waitState.delete(sessionId);
       try {
         await ctx.deleteMessage();
-      } catch {}
+      } catch {
+        // Best effort: nothing to recover if Telegram rejects this call.
+      }
     });
   }
 

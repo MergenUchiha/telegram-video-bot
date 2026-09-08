@@ -43,7 +43,7 @@ export const standardPanelText = (session: RenderSession): string => {
     `💬 Комментарий: ${comment ? `"${comment.slice(0, 60)}${comment.length > 60 ? '…' : ''}"` : '○ нет'}`,
   );
 
-  if (Boolean(session.advancedKeepWithTts)) {
+  if (session.advancedKeepWithTts) {
     lines.push(`\n⚠️ Advanced: KEEP+TTS`);
   }
 

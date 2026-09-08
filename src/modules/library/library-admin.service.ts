@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { BackgroundLibraryService } from './background-library.service';
 import { MusicLibraryService } from './music-library.service';
-import * as path from 'node:path';
 
 @Injectable()
 export class LibraryAdminService {

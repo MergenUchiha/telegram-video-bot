@@ -13,4 +13,4 @@ async function bootstrap() {
 
   logger.log(`after listen on ${await app.getUrl()}`);
 }
-bootstrap();
+void bootstrap();

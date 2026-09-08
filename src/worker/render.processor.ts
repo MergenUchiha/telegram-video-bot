@@ -68,10 +68,16 @@ export class RenderProcessor extends WorkerHost {
       return;
     }
 
-    const lockRefreshInterval = setInterval(async () => {
-      const ok = await this.lock.refreshLock(lockResult.key, sessionId);
-      if (!ok)
-        this.logger.warn(`Lock lost mid-render for session ${sessionId}`);
+    const lockRefreshInterval = setInterval(() => {
+      void this.lock
+        .refreshLock(lockResult.key, sessionId)
+        .then((ok) => {
+          if (!ok)
+            this.logger.warn(`Lock lost mid-render for session ${sessionId}`);
+        })
+        .catch((e: any) =>
+          this.logger.warn(`Lock refresh failed: ${e?.message}`),
+        );
     }, 60_000);
 
     try {

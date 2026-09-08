@@ -171,7 +171,7 @@ export class AutoJokesHandler {
       const session = await this.getSession(ctx);
       if (!session) return ctx.answerCallbackQuery({ text: 'Нет сессии' });
 
-      const cur = (session.textCardPreset ?? 'default') as string;
+      const cur = session.textCardPreset ?? 'default';
       const idx = PRESETS.indexOf(cur as any);
       const next = PRESETS[(idx + 1) % PRESETS.length];
       await this.sessions.setTextCardPreset(session.id, next);

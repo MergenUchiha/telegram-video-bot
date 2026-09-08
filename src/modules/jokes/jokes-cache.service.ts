@@ -53,7 +53,9 @@ export class JokesCacheService {
           );
           return jokes;
         }
-      } catch {}
+      } catch (e: any) {
+        this.logger.warn(`Could not read the cached pool: ${e?.message}`);
+      }
       jokes = await this.parser.fetchJokes();
     }
 
@@ -89,7 +91,9 @@ export class JokesCacheService {
           refreshedAt: meta.refreshedAt,
         };
       }
-    } catch {}
+    } catch (e: any) {
+      this.logger.warn(`Could not read pool metadata: ${e?.message}`);
+    }
     return { cached: false, count: 0, refreshedAt: null };
   }
 }

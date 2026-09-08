@@ -95,7 +95,10 @@ export class TextCardService {
    */
   private stripEmoji(text: string): string {
     return text
-      .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}\u{FE00}-\u{FEFF}]/gu, '')
+      .replace(
+        /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}]|[\u{FE00}-\u{FE0F}]/gu,
+        '',
+      )
       .replace(/\s{2,}/g, ' ')
       .trim();
   }

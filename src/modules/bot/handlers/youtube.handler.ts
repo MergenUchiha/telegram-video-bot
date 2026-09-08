@@ -35,7 +35,6 @@ export class YouTubeHandler {
         String(ctx.chat?.id),
       );
       const channels = await this.youtubeService.listChannels(user.id);
-      const msgId = ctx.message?.message_id;
 
       const text = this.buildChannelListText(channels);
       const kb = this.buildChannelListKeyboard(channels);
@@ -228,7 +227,9 @@ export class YouTubeHandler {
       const msgId = ctx.callbackQuery.message?.message_id as number;
       try {
         await ctx.api.deleteMessage(this.helper.getChatId(ctx), msgId);
-      } catch {}
+      } catch {
+        // Best effort: nothing to recover if Telegram rejects this call.
+      }
     });
   }
 
@@ -291,7 +292,9 @@ export class YouTubeHandler {
           this.helper.getChatId(ctx),
           ctx.message.message_id,
         );
-      } catch {}
+      } catch {
+        // Best effort: nothing to recover if Telegram rejects this call.
+      }
     });
   }
 
@@ -307,7 +310,7 @@ export class YouTubeHandler {
     const channel = await this.youtubeService.getChannelById(channelId);
     const channelName = channel?.channelTitle ?? 'Unknown';
 
-    await this.sessions.setState(session.id, 'YOUTUBE_WAIT_CHANNEL' as any);
+    await this.sessions.setState(session.id, 'YOUTUBE_WAIT_CHANNEL');
 
     await this.queues.enqueueYoutubeUpload({
       sessionId: session.id,
@@ -327,7 +330,9 @@ export class YouTubeHandler {
             `<i>Видео будет загружено автоматически.</i>`,
           new InlineKeyboard(),
         );
-      } catch {}
+      } catch {
+        // Best effort: nothing to recover if Telegram rejects this call.
+      }
     } else {
       await ctx.reply(
         `📺 Загрузка на YouTube (${channelName}) поставлена в очередь.`,

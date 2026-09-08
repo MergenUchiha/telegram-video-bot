@@ -66,10 +66,14 @@ export class BotUpdate {
       if (!rl.allowed) {
         const msg = `⏳ Слишком много запросов. Попробуй через ${rl.resetInSec}с.`;
         try {
-          ctx.callbackQuery
-            ? await ctx.answerCallbackQuery({ text: msg, show_alert: true })
-            : await ctx.reply(msg);
-        } catch {}
+          if (ctx.callbackQuery) {
+            await ctx.answerCallbackQuery({ text: msg, show_alert: true });
+          } else {
+            await ctx.reply(msg);
+          }
+        } catch {
+          // Best effort: nothing to recover if Telegram rejects this call.
+        }
         return;
       }
       return next();
@@ -216,7 +220,9 @@ export class BotUpdate {
             MAIN_MENU_TEXT,
             { reply_markup: mainMenuKeyboard(), parse_mode: 'HTML' },
           );
-        } catch {}
+        } catch {
+          // Best effort: nothing to recover if Telegram rejects this call.
+        }
         return;
       }
 
@@ -234,7 +240,9 @@ export class BotUpdate {
             'status:refresh',
           ),
         });
-      } catch {}
+      } catch {
+        // Best effort: nothing to recover if Telegram rejects this call.
+      }
     });
   }
 

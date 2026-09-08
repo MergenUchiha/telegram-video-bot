@@ -14,7 +14,7 @@ export class CleanupService implements OnModuleInit {
     private readonly storage: StorageService,
   ) {}
 
-  async onModuleInit() {
+  onModuleInit() {
     this.cleanupStaleTmpDirs().catch((e) =>
       this.logger.warn(`tmp cleanup failed: ${e?.message}`),
     );

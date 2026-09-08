@@ -57,7 +57,7 @@ export class FfmpegService {
         ? `${err?.message}\n\nffmpeg output:\n${this.clip(all, 2400)}`
         : String(err?.message);
       this.logger.error(this.clip(merged, 2400));
-      throw new Error(this.clip(merged, 2400));
+      throw new Error(this.clip(merged, 2400), { cause: e });
     }
   }
 

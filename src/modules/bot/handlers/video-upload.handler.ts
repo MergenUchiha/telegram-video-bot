@@ -25,7 +25,7 @@ export class VideoUploadHandler {
   ) {}
 
   register(bot: Bot): void {
-    bot.on('message:video', async (ctx, next) => {
+    bot.on('message:video', async (ctx) => {
       const user = await this.sessions.getOrCreateUser(
         String(ctx.from?.id),
         String(ctx.chat?.id),

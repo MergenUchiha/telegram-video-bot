@@ -5,14 +5,18 @@ import { REDIS_CONNECTION, REDIS_KEYS, SessionState } from './redis.constants';
 export interface SessionStatusCache {
   state: SessionState;
   updatedAt: string; // ISO
-  message?: string;  // коротко для UX
+  message?: string; // коротко для UX
 }
 
 @Injectable()
 export class ProgressService {
   constructor(@Inject(REDIS_CONNECTION) private readonly redis: IORedis) {}
 
-  async setStatus(sessionId: string, payload: SessionStatusCache, ttlSec = 60 * 60) {
+  async setStatus(
+    sessionId: string,
+    payload: SessionStatusCache,
+    ttlSec = 60 * 60,
+  ) {
     const key = REDIS_KEYS.sessionStatus(sessionId);
     await this.redis.set(key, JSON.stringify(payload), 'EX', ttlSec);
   }
@@ -45,8 +49,17 @@ export class ProgressService {
     return Number.isFinite(n) ? n : null;
   }
 
-  async setLastError(sessionId: string, message: string, ttlSec = 24 * 60 * 60) {
-    await this.redis.set(REDIS_KEYS.sessionLastError(sessionId), message, 'EX', ttlSec);
+  async setLastError(
+    sessionId: string,
+    message: string,
+    ttlSec = 24 * 60 * 60,
+  ) {
+    await this.redis.set(
+      REDIS_KEYS.sessionLastError(sessionId),
+      message,
+      'EX',
+      ttlSec,
+    );
   }
 
   async getLastError(sessionId: string): Promise<string | null> {

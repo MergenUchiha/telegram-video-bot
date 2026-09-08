@@ -1,6 +1,5 @@
 import { InlineKeyboard } from 'grammy';
 import type { RenderSession } from '@prisma/client';
-import { AUDIO_POLICIES } from '../bot.constants';
 
 export const mainMenuKeyboard = (): InlineKeyboard =>
   new InlineKeyboard()

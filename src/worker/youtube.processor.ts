@@ -5,7 +5,6 @@ import { RenderSessionState } from '@prisma/client';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { randomUUID } from 'node:crypto';
 
 import { QUEUE_YOUTUBE } from '../modules/redis/redis.constants';
 import { SessionsService } from '../modules/sessions/sessions.service';

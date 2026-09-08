@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Bot, InlineKeyboard } from 'grammy';
 import type IORedis from 'ioredis';
-import { ConfigService } from '@nestjs/config';
 import { REDIS_CONNECTION } from '../redis/redis.constants';
 import { LibraryAdminService } from '../library/library-admin.service';
 import { BackgroundLibraryService } from '../library/background-library.service';
@@ -162,7 +161,9 @@ export class LibraryBotHandler {
       await ctx.answerCallbackQuery({ text: 'Отменено' });
       try {
         await ctx.deleteMessage();
-      } catch {}
+      } catch {
+        // Best effort: nothing to recover if Telegram rejects this call.
+      }
     });
 
     bot.callbackQuery(/^lib:dv:(\d+)$/, async (ctx) => {
@@ -171,7 +172,9 @@ export class LibraryBotHandler {
       await ctx.answerCallbackQuery({ text: result });
       try {
         await ctx.deleteMessage();
-      } catch {}
+      } catch {
+        // Best effort: nothing to recover if Telegram rejects this call.
+      }
       await ctx.reply(result);
     });
 
@@ -181,7 +184,9 @@ export class LibraryBotHandler {
       await ctx.answerCallbackQuery({ text: result });
       try {
         await ctx.deleteMessage();
-      } catch {}
+      } catch {
+        // Best effort: nothing to recover if Telegram rejects this call.
+      }
       await ctx.reply(result);
     });
 
