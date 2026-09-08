@@ -198,7 +198,7 @@ export class SessionsService {
     sessionId: string,
     mode: SubtitlesMode | 'NONE' | 'HARD' | 'SOFT',
   ): Promise<RenderSession> {
-    return this.update(sessionId, { subtitlesMode: mode as SubtitlesMode });
+    return this.update(sessionId, { subtitlesMode: mode });
   }
 
   async setTtsSettings(
