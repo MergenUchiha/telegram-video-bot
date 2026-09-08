@@ -11,7 +11,9 @@ import { MetricsService } from './metrics.service';
 /**
  * GET /metrics
  * Требует заголовок: Authorization: Bearer <METRICS_TOKEN>
- * Если METRICS_TOKEN не задан — эндпоинт открыт (dev режим).
+ *
+ * Если METRICS_TOKEN не задан, эндпоинт закрыт для всех. Раньше он в этом
+ * случае открывался, и забытая переменная делала метрики публичными.
  */
 @Controller('metrics')
 export class MetricsController {
@@ -24,10 +26,13 @@ export class MetricsController {
   @HttpCode(200)
   async getMetrics(@Headers('authorization') auth: string) {
     const token = this.config.get<string>('METRICS_TOKEN');
-    if (token) {
-      const provided = (auth || '').replace(/^Bearer\s+/i, '').trim();
-      if (provided !== token)
-        throw new UnauthorizedException('Invalid metrics token');
+    if (!token) {
+      throw new UnauthorizedException('METRICS_TOKEN is not configured');
+    }
+
+    const provided = (auth || '').replace(/^Bearer\s+/i, '').trim();
+    if (provided !== token) {
+      throw new UnauthorizedException('Invalid metrics token');
     }
 
     const summary = await this.metrics.getSummary();

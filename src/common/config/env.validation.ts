@@ -73,8 +73,10 @@ export const envSchema = z.object({
   RATE_LIMIT_RENDER_MAX: coerceNumber(10),
   RATE_LIMIT_RENDER_WINDOW_SEC: coerceNumber(86400),
 
-  // ── Метрики ───────────────────────────────────────────────────────────────
+  // ── Метрики и админ-панель ────────────────────────────────────────────────
+  // Пока токен не задан, соответствующий эндпоинт отвечает 401 всем.
   METRICS_TOKEN: z.string().optional(),
+  BULL_BOARD_TOKEN: z.string().optional(),
 
   // ── BullMQ ────────────────────────────────────────────────────────────────
   BULLMQ_PREFIX: z.string().default('tvb'),

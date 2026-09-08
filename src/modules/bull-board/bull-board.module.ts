@@ -15,10 +15,10 @@ import { QUEUE_RENDER } from '../redis/redis.constants';
  * Монтирует Bull Board UI по маршруту /admin/queues.
  *
  * Защита: Authorization: Bearer <BULL_BOARD_TOKEN>
- * Если BULL_BOARD_TOKEN не задан — открыт (только для dev).
  *
- * Установка пакетов:
- *   npm install @bull-board/api @bull-board/nestjs @bull-board/express
+ * Если BULL_BOARD_TOKEN не задан, панель закрыта для всех. Раньше она в этом
+ * случае открывалась — забытая переменная означала публичное управление
+ * очередями.
  */
 @Module({
   imports: [
@@ -39,7 +39,10 @@ export class BullBoardAppModule implements NestModule {
     consumer
       .apply((req: Request, res: Response, next: NextFunction) => {
         const token = this.config.get<string>('BULL_BOARD_TOKEN');
-        if (!token) return next(); // dev: открыт
+        if (!token) {
+          res.status(503).json({ error: 'BULL_BOARD_TOKEN is not configured' });
+          return;
+        }
 
         const auth = req.headers['authorization'] ?? '';
         const provided = auth.replace(/^Bearer\s+/i, '').trim();

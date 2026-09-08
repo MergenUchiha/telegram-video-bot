@@ -18,6 +18,7 @@ import { EncryptionModule } from './modules/encryption/encryption.module';
 import { HealthModule } from './modules/health/health.module';
 import { SessionsModule } from './modules/sessions/sessions.module';
 import { YouTubeModule } from './modules/youtube/youtube.module';
+import { BullBoardAppModule } from './modules/bull-board/bull-board.module';
 import { validateEnv } from './common/config/env.validation';
 
 /**
@@ -56,6 +57,7 @@ import { validateEnv } from './common/config/env.validation';
     TextCardModule,
     // Мониторинг
     HealthModule,
+    BullBoardAppModule,
   ],
 })
 export class AppModule {}
