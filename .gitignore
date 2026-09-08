@@ -1,8 +1,32 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+*.tsbuildinfo
+
+# Environment — every variant stays out, the template stays in
 .env
+.env.*
+!.env.example
+
+# Prisma generated client
+/generated/prisma
+
+# Tests
+coverage/
+
+# Logs and temporary files
 *.log
-.DS_Store
+logs/
 *.tmp
 /tmp/
-/generated/prisma
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
