@@ -54,11 +54,25 @@ YouTube Data API.
 
 ## Setup
 
-```bash
-bun install                  # or npm install
-cp .env.example .env         # fill in TELEGRAM_BOT_TOKEN and the rest
+### Everything in containers
 
-docker compose up -d         # redis, minio, kokoro
+```bash
+cp .env.example .env   # fill in TELEGRAM_BOT_TOKEN and the passwords
+docker compose up -d --build
+```
+
+That brings up all seven services: Postgres, Redis, MinIO (plus a one-shot job
+that creates the bucket), Kokoro, the API and the worker. The API container
+applies migrations before it starts, and the worker waits for it to report
+healthy, so a fresh checkout needs no manual step.
+
+### Running the application locally
+
+```bash
+bun install            # or npm install
+cp .env.example .env
+
+docker compose up -d postgres redis minio minio-init kokoro
 npm run prisma:generate
 npm run prisma:migrate
 ```
@@ -73,18 +87,9 @@ npm run start:worker:dev     # render worker
 `npm run prisma:generate` is not optional after a fresh install: the build reads
 its types and fails with ~50 errors without it.
 
-### PostgreSQL
-
-The compose file ships Redis, MinIO and Kokoro; the `postgres`, `api` and
-`worker` services are present but commented out. Either run Postgres yourself
-and point `DATABASE_URL` at it, or uncomment that block.
-
-### MinIO
-
-`MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` are read by compose and must be set
-in `.env`; `S3_ACCESS_KEY` and `S3_SECRET_KEY` have to match them. Create the
-bucket named by `S3_BUCKET` once, through the console on
-`http://localhost:9001`.
+`MINIO_ROOT_PASSWORD` and `POSTGRES_PASSWORD` have no defaults — compose refuses
+to start without them, and MinIO refuses to start with a blank one.
+`S3_ACCESS_KEY`/`S3_SECRET_KEY` have to match the MinIO root credentials.
 
 ## Configuration
 
@@ -103,7 +108,7 @@ so a missing or malformed value stops the process with a message naming it.
 | `ADMIN_TELEGRAM_USER_IDS` | who may manage the background/music library |
 | `YOUTUBE_CLIENT_ID` / `_SECRET` | Google OAuth credentials |
 | `RATE_LIMIT_*` | per-user limits on messages, uploads and renders |
-| `METRICS_TOKEN` | bearer token for `/metrics` |
+| `METRICS_TOKEN` / `BULL_BOARD_TOKEN` | bearer tokens for `/metrics` and the queue dashboard |
 
 ## Bot commands
 
@@ -121,9 +126,11 @@ so a missing or malformed value stops the process with a message naming it.
 | `GET /health`, `/health/live`, `/health/ready` | liveness and dependency checks |
 | `GET /metrics` | queue and render counters, bearer `METRICS_TOKEN` |
 | `GET /youtube/callback` | OAuth redirect target |
+| `/admin/queues` | Bull Board dashboard, bearer `BULL_BOARD_TOKEN` |
 
-> `METRICS_TOKEN` is optional, and while it is unset `/metrics` answers without
-> authentication. Set it before exposing the service.
+> Both tokens are required for their endpoint to answer at all: while
+> `METRICS_TOKEN` is unset `/metrics` returns 401, and while `BULL_BOARD_TOKEN`
+> is unset the dashboard returns 503.
 
 ## Storage layout
 
@@ -154,13 +161,8 @@ docker compose up --scale worker=3 -d
 
 ## Known limits
 
-- `npm run build` emits to `dist/src/`, while `npm start` and
-  `npm run start:worker` look for `dist/main.js` and `dist/worker.js`.
-  Run the compiled output from `dist/src/` until the build root is narrowed.
-- `npm run lint` cannot start: the flat config imports `@eslint/js`,
-  `typescript-eslint` and `globals`, which are not in `devDependencies`.
-- The `api` and `worker` compose services reference a `Dockerfile` that is not
-  in the repository.
-- `BullBoardAppModule` is written but never imported by `AppModule`, so the
-  queue dashboard it defines at `/admin/queues` is not served.
-- There are no tests; `test/app.e2e-spec.ts` is the generated Nest boilerplate.
+- Uploaded videos are held in memory when sent back to Telegram, so a 50MB
+  result costs 50MB of worker heap.
+- The jokes parser scrapes four public sites; a layout change there breaks that
+  mode until the selectors are updated.
+- Tests cover the health endpoints only.

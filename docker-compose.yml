@@ -1,7 +1,5 @@
 name: telegram-video-bot
 services:
-  # ── Существующие сервисы (без изменений) ────────────────────────────────────
-
   redis:
     image: redis:7-alpine
     container_name: telegram-video-bot-redis
@@ -17,6 +15,25 @@ services:
       retries: 20
     restart: unless-stopped
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: telegram-video-bot-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-renderer}
+      POSTGRES_USER: ${POSTGRES_USER:-renderer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      # Loopback only: the database is not exposed beyond this host.
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-renderer}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   minio:
     image: minio/minio:latest
     container_name: telegram-video-bot-minio
@@ -25,8 +42,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
-      - '9000:9000' # S3 API
-      - '9001:9001' # Console UI
+      - '127.0.0.1:9000:9000' # S3 API
+      - '127.0.0.1:9001:9001' # Console UI
     volumes:
       - minio_data:/data
     healthcheck:
@@ -39,6 +56,22 @@ services:
       timeout: 3s
       retries: 30
     restart: unless-stopped
+
+  # Creates the bucket once MinIO is up, so a fresh checkout needs no manual
+  # step in the console.
+  minio-init:
+    image: minio/mc:latest
+    container_name: telegram-video-bot-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD};
+        mc mb --ignore-existing local/$${S3_BUCKET:-renderer};
+        exit 0;
+      "
+    env_file: .env
 
   kokoro:
     image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
@@ -55,82 +88,69 @@ services:
       start_period: 60s
     restart: unless-stopped
 
-  # ── Новые сервисы ────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: telegram-video-bot-api
+    # Applies migrations, then serves the HTTP API and runs the bot.
+    command: ['sh', './docker/start-api.sh']
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-renderer}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-renderer}
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      S3_ENDPOINT: http://minio:9000
+      KOKORO_BASE_URL: http://kokoro:8880
+      PORT: '3000'
+    ports:
+      - '${API_PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          node -e "fetch('http://localhost:3000/health/live').then(r =>
+          process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
 
-  # postgres:
-  #   image: postgres:16-alpine
-  #   container_name: telegram-video-bot-postgres
-  #   environment:
-  #     POSTGRES_DB: ${POSTGRES_DB:-renderer}
-  #     POSTGRES_USER: ${POSTGRES_USER:-renderer}
-  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:}
-  #   ports:
-  #     - '5432:5432'
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #   healthcheck:
-  #     test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-renderer}']
-  #     interval: 5s
-  #     timeout: 5s
-  #     retries: 20
-  #   restart: unless-stopped
-
-  # api:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   container_name: telegram-video-bot-api
-  #   command: node dist/main.js
-  #   env_file: .env
-  #   environment:
-  #     DATABASE_URL: postgresql://${POSTGRES_USER:-renderer}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-renderer}
-  #     REDIS_HOST: redis
-  #     REDIS_PORT: '6379'
-  #     S3_ENDPOINT: http://minio:9000
-  #     KOKORO_BASE_URL: http://kokoro:8880
-  #   ports:
-  #     - '${API_PORT:-3000}:3000'
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #     minio:
-  #       condition: service_healthy
-  #   restart: unless-stopped
-
-  # Горизонтальный скейл: docker compose up --scale worker=3 -d
-  # worker:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #   command: node dist/worker.js
-  #   env_file: .env
-  #   environment:
-  #     DATABASE_URL: postgresql://${POSTGRES_USER:-renderer}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-renderer}
-  #     REDIS_HOST: redis
-  #     REDIS_PORT: '6379'
-  #     S3_ENDPOINT: http://minio:9000
-  #     KOKORO_BASE_URL: http://kokoro:8880
-  #     RENDER_TMP_DIR: /tmp/renderer
-  #     TMP_CLEANUP_AGE_HOURS: '2'
-  #     INPUT_LIFECYCLE_DAYS: '3'
-  #     OUTPUT_LIFECYCLE_DAYS: '7'
-  #   volumes:
-  #     - worker_tmp:/tmp/renderer
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #     minio:
-  #       condition: service_healthy
-  #     kokoro:
-  #       condition: service_healthy
-  #   restart: unless-stopped
+  # Horizontal scale: docker compose up --scale worker=3 -d
+  # No container_name here — it would collide when scaling past one replica.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ['sh', './docker/start-worker.sh']
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-renderer}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-renderer}
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      S3_ENDPOINT: http://minio:9000
+      KOKORO_BASE_URL: http://kokoro:8880
+      RENDER_TMP_DIR: /tmp/renderer
+    volumes:
+      - worker_tmp:/tmp/renderer
+    depends_on:
+      # Waits for the API so migrations have been applied before it starts.
+      api:
+        condition: service_healthy
+      kokoro:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   redis_data:
   minio_data:
-  # postgres_data:
-  # worker_tmp:
+  postgres_data:
+  worker_tmp:
