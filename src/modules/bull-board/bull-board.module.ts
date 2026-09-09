@@ -53,6 +53,8 @@ export class BullBoardAppModule implements NestModule {
         }
         return next();
       })
-      .forRoutes({ path: '/admin/queues*', method: RequestMethod.ALL });
+      // Express 5 uses path-to-regexp v8, where a bare `*` is not a valid
+      // parameter — the wildcard has to be named.
+      .forRoutes({ path: '/admin/queues{*path}', method: RequestMethod.ALL });
   }
 }
