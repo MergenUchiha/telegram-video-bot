@@ -70,12 +70,18 @@ export class RenderProcessor extends WorkerHost {
       return;
     }
 
+    // If the lock expires mid-render another worker can pick the session up,
+    // and both would upload and send a video. Losing it is recorded here and
+    // checked before anything is published.
+    let lockLost = false;
     const lockRefreshInterval = setInterval(() => {
       void this.lock
         .refreshLock(lockResult.key, sessionId)
         .then((ok) => {
-          if (!ok)
-            this.logger.warn(`Lock lost mid-render for session ${sessionId}`);
+          if (!ok) {
+            lockLost = true;
+            this.logger.error(`Lock lost mid-render for session ${sessionId}`);
+          }
         })
         .catch((e: unknown) =>
           this.logger.warn(`Lock refresh failed: ${errorMessage(e)}`),
@@ -127,6 +133,13 @@ export class RenderProcessor extends WorkerHost {
         }
       } else {
         outputPath = await this.standardRender.render({ session, tmpDir });
+      }
+
+      if (lockLost) {
+        throw new Error(
+          'Render lock was lost mid-render; another worker may hold this ' +
+            'session, so the result is discarded instead of sent twice',
+        );
       }
 
       await this.finalizeAndSend(sessionId, chatId, outputPath, startedAt);

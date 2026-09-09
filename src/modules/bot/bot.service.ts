@@ -25,7 +25,18 @@ export class BotService implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    void this.startBot();
+    // Detached on purpose: bot.start() only resolves when polling stops, and
+    // awaiting it here would block Nest before app.listen(). The rejection has
+    // to be caught, though — an invalid or revoked token otherwise surfaces as
+    // an unhandled rejection and takes the HTTP server down with it.
+    void this.startBot().catch((e: unknown) => {
+      const { message, stack } = formatError(e);
+      this.logger.error(`Telegram bot failed to start: ${message}`, stack);
+      this.logger.error(
+        'The bot is not running. The HTTP server keeps serving health, ' +
+          'metrics and the YouTube callback.',
+      );
+    });
   }
 
   private async startBot(): Promise<void> {
@@ -63,7 +74,8 @@ export class BotService implements OnModuleInit {
     }
 
     this.logger.log('Starting Telegram bot (polling)...');
-    await bot.start();
-    this.logger.log('Telegram bot started');
+    await bot.start({
+      onStart: () => this.logger.log('Telegram bot polling started'),
+    });
   }
 }

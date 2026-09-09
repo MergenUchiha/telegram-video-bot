@@ -138,7 +138,13 @@ export class StorageService {
     contentType = 'application/octet-stream',
   ) {
     const stream = fs.createReadStream(filePath);
-    return this.uploadStream(key, stream, contentType);
+    try {
+      return await this.uploadStream(key, stream, contentType);
+    } catch (e) {
+      // The read stream stays open on a failed upload and leaks the handle.
+      stream.destroy();
+      throw e;
+    }
   }
 
   async downloadToFile(key: string, filePath: string) {
@@ -151,9 +157,20 @@ export class StorageService {
     }
     await new Promise<void>((resolve, reject) => {
       const out = fs.createWriteStream(filePath);
-      (body as Readable).pipe(out);
+
+      // A failure on either side has to tear down the other, or the surviving
+      // stream keeps the file handle and the socket open.
+      body.on('error', (err: Error) => {
+        out.destroy();
+        reject(err);
+      });
+      out.on('error', (err: Error) => {
+        body.destroy();
+        reject(err);
+      });
       out.on('finish', () => resolve());
-      out.on('error', reject);
+
+      body.pipe(out);
     });
   }
 

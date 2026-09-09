@@ -50,6 +50,21 @@ export class RateLimitService {
     };
   }
 
+  /**
+   * INCR and EXPIRE as one server-side step.
+   *
+   * Run separately, two callers can both see count == 1 and the window can be
+   * re-armed on every request — or, if the process dies between them, the key
+   * never expires and the user stays blocked for good.
+   */
+  private static readonly INCREMENT_AND_ARM = `
+    local count = redis.call('INCR', KEYS[1])
+    if count == 1 then
+      redis.call('EXPIRE', KEYS[1], ARGV[1])
+    end
+    return {count, redis.call('TTL', KEYS[1])}
+  `;
+
   async check(
     userId: string,
     action: RateLimitAction = 'command',
@@ -57,23 +72,17 @@ export class RateLimitService {
     const { max, windowSec } = this.limits[action];
     const key = `ratelimit:${action}:${userId}`;
 
-    const pipeline = this.redis.pipeline();
-    pipeline.incr(key);
-    pipeline.ttl(key);
-    const results = await pipeline.exec();
-
-    const count = Number((results?.[0]?.[1] as number) ?? 1);
-    let ttl = Number((results?.[1]?.[1] as number) ?? -1);
-
-    if (ttl < 0) {
-      await this.redis.expire(key, windowSec);
-      ttl = windowSec;
-    }
+    const [count, ttl] = (await this.redis.eval(
+      RateLimitService.INCREMENT_AND_ARM,
+      1,
+      key,
+      windowSec,
+    )) as [number, number];
 
     return {
       allowed: count <= max,
       remaining: Math.max(0, max - count),
-      resetInSec: ttl,
+      resetInSec: ttl > 0 ? ttl : windowSec,
     };
   }
 }

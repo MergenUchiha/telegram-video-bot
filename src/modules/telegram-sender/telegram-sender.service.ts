@@ -2,6 +2,17 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'node:fs';
 
+/**
+ * fetch has no timeout of its own: without a signal a stalled connection to
+ * Telegram hangs the caller forever, and in the worker that means a render job
+ * that never finishes and never fails.
+ */
+const API_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 120_000;
+
+/** Telegram rejects sendVideo above this; failing early says why. */
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+
 @Injectable()
 export class TelegramSenderService {
   private readonly token: string;
@@ -24,6 +35,7 @@ export class TelegramSenderService {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text }),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     });
     if (!res.ok)
       throw new Error(`sendMessage failed: ${res.status} ${res.statusText}`);
@@ -66,6 +78,13 @@ export class TelegramSenderService {
   ) {
     const url = `${this.apiBase}/bot${this.token}/sendVideo`;
 
+    const { size } = await fs.promises.stat(filePath);
+    if (size > MAX_VIDEO_BYTES) {
+      throw new Error(
+        `Video file too large: ${(size / 1024 / 1024).toFixed(1)}MB (max 50MB)`,
+      );
+    }
+
     const buf = await fs.promises.readFile(filePath);
     const form = new FormData();
     form.set('chat_id', chatId);
@@ -73,7 +92,11 @@ export class TelegramSenderService {
     if (replyMarkup) form.set('reply_markup', JSON.stringify(replyMarkup));
     form.set('video', new Blob([buf]), 'out.mp4');
 
-    const res = await fetch(url, { method: 'POST', body: form });
+    const res = await fetch(url, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+    });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(

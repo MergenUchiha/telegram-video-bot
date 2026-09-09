@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Readable } from 'stream';
 
+/** fetch has no timeout of its own; a stalled download would hang the job. */
+const API_TIMEOUT_MS = 30_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+
 /** The part of Telegram's getFile response this service reads. */
 interface TelegramGetFileResponse {
   result?: { file_path?: string };
@@ -31,7 +35,9 @@ export class TelegramFilesService {
     fileId: string,
   ): Promise<{ stream: Readable; filePath: string }> {
     const getFileUrl = `${this.apiBase}/bot${this.token}/getFile?file_id=${encodeURIComponent(fileId)}`;
-    const metaRes = await fetch(getFileUrl);
+    const metaRes = await fetch(getFileUrl, {
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    });
     if (!metaRes.ok)
       throw new Error(
         `Telegram getFile failed: ${metaRes.status} ${metaRes.statusText}`,
@@ -42,7 +48,9 @@ export class TelegramFilesService {
       throw new Error('Telegram getFile: missing result.file_path');
 
     const downloadUrl = `${this.apiBase}/file/bot${this.token}/${filePath}`;
-    const fileRes = await fetch(downloadUrl);
+    const fileRes = await fetch(downloadUrl, {
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
     if (!fileRes.ok)
       throw new Error(
         `Telegram file download failed: ${fileRes.status} ${fileRes.statusText}`,
